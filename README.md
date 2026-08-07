@@ -32,5 +32,8 @@ npm run build
 - Provider-neutral interface and safe browser gateway client
 - Explicit provider-unconfigured, empty, refresh, and error states
 - Phase 1 PostGIS migration with RLS and service-only ingestion
+- Phase 2 authenticated registration/ICAO24/callsign search, atomic recorder transaction, 24-hour spatial replay, and per-source gap handling
 
 Live aircraft remain blocked until the provider onboarding gate in `docs/provider-onboarding.md` is completed.
+
+Phase Two implementation details and deployment gates are documented in `docs/phase-two-flight-recorder.md`.
