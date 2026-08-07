@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { fetchAircraft } from "./api/aircraft";
-import { fetchRecentTrack, fetchTrackInsights, searchAircraft } from "./api/history";
+import { fetchNearbyAircraft, fetchRecentTrack, fetchRouteSummary, fetchTrackInsights, searchAircraft } from "./api/history";
 import { LiveMap } from "./components/LiveMap";
 import { ReplayPanel } from "./components/ReplayPanel";
 import { AuthenticationRequiredError, ProviderNotConfiguredError } from "./providers/contracts";
@@ -43,6 +43,18 @@ export default function App() {
     queryKey: ["track-insights", selectedIcao24],
     queryFn: ({ signal }) => fetchTrackInsights({ icao24: selectedIcao24!, hours: 24 }, signal),
     enabled: selectedIcao24 !== null,
+    retry: false,
+  });
+  const routeSummary = useQuery({
+    queryKey: ["route-summary", selectedIcao24],
+    queryFn: ({ signal }) => fetchRouteSummary({ icao24: selectedIcao24!, hours: 24 }, signal),
+    enabled: selectedIcao24 !== null,
+    retry: false,
+  });
+  const nearby = useQuery({
+    queryKey: ["nearby-aircraft", latitude, longitude, radiusNm],
+    queryFn: ({ signal }) => fetchNearbyAircraft({ latitude, longitude, radiusNm, hours: 24 }, signal),
+    enabled: Boolean(import.meta.env.VITE_HISTORY_API_URL),
     retry: false,
   });
 
@@ -99,6 +111,22 @@ export default function App() {
               <div><dt>Altitude range</dt><dd>{insights.data.summary.altitudeFt.min == null ? "Unknown" : `${Math.round(insights.data.summary.altitudeFt.min).toLocaleString()}–${Math.round(insights.data.summary.altitudeFt.max ?? insights.data.summary.altitudeFt.min).toLocaleString()} ft`}</dd></div>
               <div><dt>Average speed</dt><dd>{insights.data.summary.groundSpeedKt.average == null ? "Unknown" : `${Math.round(insights.data.summary.groundSpeedKt.average)} kt`}</dd></div>
             </dl>
+          </section>
+        ) : null}
+        {routeSummary.isFetching ? <p className="track-empty" role="status">Computing route summary…</p> : routeSummary.error instanceof ProviderNotConfiguredError ? null : routeSummary.isError ? <p className="track-error" role="alert">Route summary unavailable: {routeSummary.error.message}</p> : routeSummary.data ? (
+          <section className="replay" aria-labelledby="route-summary-heading">
+            <div className="replay-title"><div><p className="eyebrow">Route analytics</p><h3 id="route-summary-heading">Path summary · {routeSummary.data.aircraft.registration ?? routeSummary.data.aircraft.icao24}</h3></div><span>{routeSummary.data.summary.loiteringDetected ? "Loitering" : "Transit"}</span></div>
+            <dl className="replay-facts">
+              <div><dt>Duration</dt><dd>{Math.round(routeSummary.data.summary.durationMinutes)} min</dd></div>
+              <div><dt>Distance</dt><dd>{routeSummary.data.summary.totalDistanceNm.toFixed(1)} NM</dd></div>
+              <div><dt>Loitering</dt><dd>{routeSummary.data.summary.loiteringDetected ? `${Math.round(routeSummary.data.summary.loiteringMinutes)} min` : "None"}</dd></div>
+            </dl>
+          </section>
+        ) : null}
+        {nearby.isFetching ? <p className="track-empty" role="status">Scanning nearby aircraft…</p> : nearby.error instanceof ProviderNotConfiguredError ? null : nearby.isError ? <p className="track-error" role="alert">Nearby aircraft unavailable: {nearby.error.message}</p> : nearby.data && nearby.data.matches.length > 0 ? (
+          <section className="replay" aria-labelledby="nearby-heading">
+            <div className="replay-title"><div><p className="eyebrow">Proximity</p><h3 id="nearby-heading">Nearby aircraft within {nearby.data.query.radiusNm.toFixed(0)} NM</h3></div><span>{nearby.data.matches.length} matches</span></div>
+            <ul className="aircraft-list">{nearby.data.matches.map((item) => <li key={item.icao24}><strong>{item.registration ?? item.callsign ?? item.icao24}</strong><span>{item.distanceNm.toFixed(1)} NM away</span><small>{item.icao24} · {new Date(item.observedAt).toISOString()}</small></li>)}</ul>
           </section>
         ) : null}
       </main>
