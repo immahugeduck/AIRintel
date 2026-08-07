@@ -104,6 +104,29 @@ export const trackResponseSchema = z.object({
   }),
 });
 
+export const trackInsightsResponseSchema = z.object({
+  aircraft: aircraftSummarySchema,
+  windowStart: z.iso.datetime({ offset: true }),
+  windowEnd: z.iso.datetime({ offset: true }),
+  receivedAt: z.iso.datetime({ offset: true }),
+  summary: z.object({
+    pointCount: z.number().int().nonnegative(),
+    sourceCount: z.number().int().nonnegative(),
+    altitudeFt: z.object({
+      min: z.number().nullable(),
+      max: z.number().nullable(),
+      average: z.number().nullable(),
+    }),
+    groundSpeedKt: z.object({
+      min: z.number().nullable(),
+      max: z.number().nullable(),
+      average: z.number().nullable(),
+    }),
+  }),
+});
+
+export type TrackInsightsQuery = { icao24: string; hours?: number };
+
 export type TrackPoint = z.infer<typeof trackPointSchema>;
 
 export type TrackSegment = {
@@ -113,6 +136,13 @@ export type TrackSegment = {
 };
 
 export type ProviderTrack = { provider: string; segments: TrackSegment[] };
+
+export type TrackSummary = {
+  pointCount: number;
+  sourceCount: number;
+  altitudeFt: { min: number | null; max: number | null; average: number | null };
+  groundSpeedKt: { min: number | null; max: number | null; average: number | null };
+};
 
 export function gapDurationSeconds(previousAt: string, currentAt: string): number {
   return (Date.parse(currentAt) - Date.parse(previousAt)) / 1000;
@@ -151,4 +181,24 @@ export function segmentTracksByProvider(points: TrackPoint[], gapThresholdSecond
     provider,
     segments: segmentTrack(providerPoints, gapThresholdSeconds),
   }));
+}
+
+export function summarizeTrackPoints(points: TrackPoint[]): TrackSummary {
+  const altitudeValues = points.map((point) => point.altitudeFt).filter((value): value is number => value != null);
+  const speedValues = points.map((point) => point.groundSpeedKt).filter((value): value is number => value != null);
+
+  return {
+    pointCount: points.length,
+    sourceCount: new Set(points.map((point) => point.provider)).size,
+    altitudeFt: {
+      min: altitudeValues.length > 0 ? Math.min(...altitudeValues) : null,
+      max: altitudeValues.length > 0 ? Math.max(...altitudeValues) : null,
+      average: altitudeValues.length > 0 ? altitudeValues.reduce((sum, value) => sum + value, 0) / altitudeValues.length : null,
+    },
+    groundSpeedKt: {
+      min: speedValues.length > 0 ? Math.min(...speedValues) : null,
+      max: speedValues.length > 0 ? Math.max(...speedValues) : null,
+      average: speedValues.length > 0 ? speedValues.reduce((sum, value) => sum + value, 0) / speedValues.length : null,
+    },
+  };
 }

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { fetchAircraft } from "./api/aircraft";
-import { fetchRecentTrack, searchAircraft } from "./api/history";
+import { fetchRecentTrack, fetchTrackInsights, searchAircraft } from "./api/history";
 import { LiveMap } from "./components/LiveMap";
 import { ReplayPanel } from "./components/ReplayPanel";
 import { AuthenticationRequiredError, ProviderNotConfiguredError } from "./providers/contracts";
@@ -36,6 +36,12 @@ export default function App() {
   const track = useQuery({
     queryKey: ["recent-track", selectedIcao24],
     queryFn: ({ signal }) => fetchRecentTrack(selectedIcao24!, signal),
+    enabled: selectedIcao24 !== null,
+    retry: false,
+  });
+  const insights = useQuery({
+    queryKey: ["track-insights", selectedIcao24],
+    queryFn: ({ signal }) => fetchTrackInsights({ icao24: selectedIcao24!, hours: 24 }, signal),
     enabled: selectedIcao24 !== null,
     retry: false,
   });
@@ -85,6 +91,16 @@ export default function App() {
           </aside>
         </div>
         {track.isFetching ? <p className="track-empty" role="status">Loading the selected aircraft’s recorded observations…</p> : track.error instanceof ProviderNotConfiguredError ? null : track.isError ? <p className="track-error" role="alert">Track unavailable: {track.error.message}</p> : track.data?.points.length === 0 ? <p className="track-empty">No observations were recorded for this aircraft in the selected 24-hour window.</p> : track.data ? <ReplayPanel points={track.data.points} aircraftLabel={track.data.aircraft.registration ?? track.data.aircraft.icao24} index={replayIndex} onIndexChange={setReplayIndex} /> : null}
+        {insights.isFetching ? <p className="track-empty" role="status">Computing track insights…</p> : insights.error instanceof ProviderNotConfiguredError ? null : insights.isError ? <p className="track-error" role="alert">Insights unavailable: {insights.error.message}</p> : insights.data ? (
+          <section className="replay" aria-labelledby="insights-heading">
+            <div className="replay-title"><div><p className="eyebrow">Track insights</p><h3 id="insights-heading">24-hour summary · {insights.data.aircraft.registration ?? insights.data.aircraft.icao24}</h3></div><span>{insights.data.summary.pointCount} points</span></div>
+            <dl className="replay-facts">
+              <div><dt>Sources</dt><dd>{insights.data.summary.sourceCount}</dd></div>
+              <div><dt>Altitude range</dt><dd>{insights.data.summary.altitudeFt.min == null ? "Unknown" : `${Math.round(insights.data.summary.altitudeFt.min).toLocaleString()}–${Math.round(insights.data.summary.altitudeFt.max ?? insights.data.summary.altitudeFt.min).toLocaleString()} ft`}</dd></div>
+              <div><dt>Average speed</dt><dd>{insights.data.summary.groundSpeedKt.average == null ? "Unknown" : `${Math.round(insights.data.summary.groundSpeedKt.average)} kt`}</dd></div>
+            </dl>
+          </section>
+        ) : null}
       </main>
       <footer><span>UTC-first · Provider-neutral · Evidence standard enforced</span><span>Phase 2 · Configuration gated</span></footer>
     </div>
