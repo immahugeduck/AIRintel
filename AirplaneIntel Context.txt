@@ -1,0 +1,131 @@
+﻿AirplaneIntel Context 
+
+
+Worked for 16s
+
+
+Codex starter pack
+
+
+Download AirRoute Intelligence Codex Starter
+
+
+The ZIP contains:
+
+
+AGENTS.md — permanent operating instructions for Codex
+
+
+CODEX_START_PROMPT.txt — the first task to paste into Codex
+
+
+docs/AIRROUTE_PROJECT_BRIEF.md — full product requirements and phased roadmap
+
+
+.env.example — MapQuest, ADS-B, OpenSky, Supabase, and later OpenAI configuration
+
+
+supabase/migrations/0001_initial_schema.sql — initial PostGIS database structure
+
+
+README.md — startup sequence
+
+
+
+
+Recommended startup process
+
+
+1. Create a new GitHub repository named something like:
+
+
+
+
+
+
+airroute-intelligence
+
+
+2. Download and unzip the starter pack.
+
+
+
+
+3. Place the contents inside the repository root. The structure should look like:
+
+
+
+
+
+
+airroute-intelligence/
+├── AGENTS.md
+├── CODEX_START_PROMPT.txt
+├── README.md
+├── .env.example
+├── docs/
+│   └── AIRROUTE_PROJECT_BRIEF.md
+└── supabase/
+    └── migrations/
+        └── 0001_initial_schema.sql
+
+
+4. Commit and push these files to GitHub.
+
+
+
+
+5. Open the repository in Codex or create a Codex cloud environment connected to it. Codex can inspect the repository, modify files, run commands and tests, and return changes for review. 
+
+
+
+
+6. Open CODEX_START_PROMPT.txt, copy the complete contents, and submit that as the first coding task.
+
+
+
+
+
+
+First task outcome
+
+
+The first Codex run is deliberately limited to:
+
+
+React, Vite, and TypeScript foundation
+
+
+Leaflet map
+
+
+MapQuest integration point
+
+
+Mock aircraft feed
+
+
+Aircraft marker rotation
+
+
+Aircraft details panel
+
+
+Recent route trail
+
+
+Provider-neutral API adapter
+
+
+Canonical aircraft observation model
+
+
+Tests and build verification
+
+
+
+
+It specifically tells Codex not to connect the live ADS-B or OpenSky feeds yet. That prevents it from guessing provider formats, misusing your keys, or building around the wrong API contract.
+
+
+Once the mock-map foundation works, the next task will be integrating your exact ADS-B provider and OpenSky credentials through server-side adapters. Codex remote tasks run against the connected repository in an isolated environment, so keys should be configured as environment secrets rather than committed into the repository. ❶

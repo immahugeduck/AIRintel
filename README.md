@@ -1,0 +1,36 @@
+# AIRIntel
+
+AIRIntel (AirRoute Intelligence) is an evidence-based live and historical aircraft analysis platform. Phase One establishes the Leaflet/MapQuest UI, strict aircraft observation contract, provider-neutral gateway boundary, and secured PostGIS foundation.
+
+## Real-data policy
+
+This repository contains no simulated or mock aircraft. Without approved MapQuest and aircraft-provider configuration, the application shows honest configuration-required states.
+
+## Local setup
+
+```powershell
+npm install
+Copy-Item .env.example .env.local
+npm run dev
+```
+
+Configure only browser-safe values in `VITE_*`. Aircraft-provider credentials and Supabase service-role credentials belong in Supabase Edge Function secrets, never `.env.local` values exposed through Vite.
+
+## Verification
+
+```powershell
+npm run typecheck
+npm test
+npm run build
+```
+
+## Phase One status
+
+- React, Vite, strict TypeScript, Leaflet, TanStack Query, and Zod foundation
+- MapQuest layer activated only with approved browser configuration
+- Canonical observation and radius-query validation
+- Provider-neutral interface and safe browser gateway client
+- Explicit provider-unconfigured, empty, refresh, and error states
+- Phase 1 PostGIS migration with RLS and service-only ingestion
+
+Live aircraft remain blocked until the provider onboarding gate in `docs/provider-onboarding.md` is completed.

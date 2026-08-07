@@ -1,0 +1,41 @@
+Build the initial AirRoute Intelligence MVP foundation in this repository.
+
+First, read:
+- `AGENTS.md`
+- `docs/AIRROUTE_PROJECT_BRIEF.md`
+- `.env.example`
+- `supabase/migrations/0001_initial_schema.sql`
+
+Then do the following:
+
+1. Inspect the repository and report whether it is empty or contains an existing application.
+2. Create the smallest maintainable TypeScript monorepo or single Vite application that satisfies the project brief. Do not over-engineer it.
+3. Use React, Vite, TypeScript strict mode, Leaflet, TanStack Query, and Zod.
+4. Create a provider-neutral aircraft adapter interface and a mock adapter.
+5. Define and validate the canonical `NormalizedAircraftObservation` model.
+6. Build a responsive live-map page using Leaflet.
+7. Add a MapQuest tile integration that activates only when the required public configuration is present.
+8. When MapQuest configuration is absent, fall back to a clearly labeled development basemap or a non-network mock map state, depending on available environment/network constraints. Do not embed any secret.
+9. Render several mock aircraft with:
+   - heading rotation,
+   - registration/callsign,
+   - altitude,
+   - speed,
+   - last update,
+   - data source.
+10. Add an aircraft detail drawer and a recent mock track.
+11. Add environment-variable documentation.
+12. Add unit tests for observation normalization and invalid provider data.
+13. Ensure `npm install`, typecheck, tests, and production build succeed.
+14. Update `README.md` with exact setup and run instructions.
+15. Do not integrate live ADS-B or OpenSky calls until the provider identity, documentation, authentication, and rate limits are supplied.
+16. Do not implement AI analysis yet.
+17. At completion, give a concise report containing:
+   - architecture chosen,
+   - files changed,
+   - commands run,
+   - test/build results,
+   - assumptions,
+   - information needed for the next task.
+
+Success means I can open the app locally, see a working aircraft map using mock data, click an aircraft, inspect its details and track, and understand exactly where live provider adapters will be connected.
