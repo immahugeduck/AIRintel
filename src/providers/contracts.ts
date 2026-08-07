@@ -11,3 +11,10 @@ export class ProviderNotConfiguredError extends Error {
     this.name = "ProviderNotConfiguredError";
   }
 }
+
+export class AuthenticationRequiredError extends Error {
+  constructor() {
+    super("Sign in is required to access recorded aircraft history.");
+    this.name = "AuthenticationRequiredError";
+  }
+}
