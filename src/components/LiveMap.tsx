@@ -3,11 +3,11 @@ import "leaflet/dist/leaflet.css";
 import type { LatLngExpression } from "leaflet";
 import { segmentTracksByProvider, type TrackPoint } from "../domain/aircraft";
 
-type Props = { center: LatLngExpression; trackPoints?: TrackPoint[]; replayIndex?: number };
+type Props = { id?: string; center: LatLngExpression; trackPoints?: TrackPoint[]; replayIndex?: number };
 
 const sourceColors = ["#37d4b5", "#f0b85c", "#79a8ff", "#e886b7"];
 
-export function LiveMap({ center, trackPoints = [], replayIndex = 0 }: Props) {
+export function LiveMap({ id, center, trackPoints = [], replayIndex = 0 }: Props) {
   const tileUrl = import.meta.env.VITE_MAPQUEST_TILE_URL;
   const mapQuestKey = import.meta.env.VITE_MAPQUEST_KEY;
   const configured = Boolean(tileUrl && mapQuestKey);
@@ -16,7 +16,7 @@ export function LiveMap({ center, trackPoints = [], replayIndex = 0 }: Props) {
   const replayPoint = ordered[Math.min(replayIndex, Math.max(0, ordered.length - 1))];
 
   return (
-    <section className="map-panel" aria-labelledby="map-heading">
+    <section id={id} className="map-panel" aria-labelledby="map-heading">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Observed positions</p>
