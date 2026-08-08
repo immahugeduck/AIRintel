@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "faa:validate": "node scripts/faa-validate.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.55.0",
