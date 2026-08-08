@@ -1,4 +1,4 @@
-import { aircraftSearchResponseSchema, trackResponseSchema } from "../domain/aircraft";
+import { aircraftSearchResponseSchema, nearbyAircraftResponseSchema, routeSummaryResponseSchema, trackResponseSchema, trackInsightsResponseSchema, type NearbyAircraftQuery, type RouteSummaryQuery, type TrackInsightsQuery } from "../domain/aircraft";
 import { getSupabaseClient } from "../lib/supabase";
 import { AuthenticationRequiredError, ProviderNotConfiguredError } from "../providers/contracts";
 
@@ -42,4 +42,39 @@ export async function fetchRecentTrack(icao24: string, signal?: AbortSignal) {
   url.searchParams.set("icao24", normalized);
   url.searchParams.set("hours", "24");
   return trackResponseSchema.parse(await getJson(url, signal));
+}
+
+export async function fetchTrackInsights(query: TrackInsightsQuery, signal?: AbortSignal) {
+  const normalized = query.icao24.trim().toLowerCase();
+  if (!/^[0-9a-f]{6}$/.test(normalized)) throw new Error("ICAO24 must be six hexadecimal characters");
+  const url = new URL(endpoint());
+  url.searchParams.set("action", "insights");
+  url.searchParams.set("icao24", normalized);
+  url.searchParams.set("hours", String(Math.min(72, Math.max(1, query.hours ?? 24))));
+  return trackInsightsResponseSchema.parse(await getJson(url, signal));
+}
+
+export async function fetchRouteSummary(query: RouteSummaryQuery, signal?: AbortSignal) {
+  const normalized = query.icao24.trim().toLowerCase();
+  if (!/^[0-9a-f]{6}$/.test(normalized)) throw new Error("ICAO24 must be six hexadecimal characters");
+  const url = new URL(endpoint());
+  url.searchParams.set("action", "route-summary");
+  url.searchParams.set("icao24", normalized);
+  url.searchParams.set("hours", String(Math.min(72, Math.max(1, query.hours ?? 24))));
+  return routeSummaryResponseSchema.parse(await getJson(url, signal));
+}
+
+export async function fetchNearbyAircraft(query: NearbyAircraftQuery, signal?: AbortSignal) {
+  const safeQuery = {
+    latitude: query.latitude,
+    longitude: query.longitude,
+    radiusNm: query.radiusNm,
+  };
+  const url = new URL(endpoint());
+  url.searchParams.set("action", "nearby");
+  url.searchParams.set("lat", String(safeQuery.latitude));
+  url.searchParams.set("lon", String(safeQuery.longitude));
+  url.searchParams.set("radiusNm", String(Math.min(100, Math.max(1, safeQuery.radiusNm))));
+  if (query.hours != null) url.searchParams.set("hours", String(Math.min(72, Math.max(1, query.hours))));
+  return nearbyAircraftResponseSchema.parse(await getJson(url, signal));
 }

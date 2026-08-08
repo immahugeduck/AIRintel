@@ -86,6 +86,174 @@ Deno.serve(async (request) => {
     );
   }
 
+  if (action === "insights") {
+    const parsed = icaoSchema.safeParse(url.searchParams.get("icao24"));
+    const hours = Math.min(72, Math.max(1, Number(url.searchParams.get("hours") ?? 24)));
+    if (!parsed.success || !Number.isFinite(hours)) return json({ error: "invalid_track_query" }, 400, origin);
+    const windowEnd = new Date();
+    const windowStart = new Date(windowEnd.getTime() - hours * 3_600_000);
+    const { data: aircraft, error: aircraftError } = await database
+      .from("aircraft")
+      .select("id,icao24,registration,first_seen_at,last_seen_at")
+      .eq("icao24", parsed.data)
+      .maybeSingle();
+    if (aircraftError) return json({ error: "history_query_failed" }, 500, origin);
+    if (!aircraft) return json({ error: "aircraft_not_found" }, 404, origin);
+    const { data: positions, error: positionsError } = await database
+      .from("aircraft_positions")
+      .select("latitude,longitude,altitude_ft,ground_speed_kt,observed_at")
+      .eq("aircraft_id", aircraft.id)
+      .gte("observed_at", windowStart.toISOString())
+      .lte("observed_at", windowEnd.toISOString())
+      .order("observed_at", { ascending: false })
+      .limit(10_001)
+      .abortSignal(AbortSignal.timeout(8_000));
+    if (positionsError) return json({ error: "history_query_failed" }, 500, origin);
+    const validPositions = positions ?? [];
+    const altitudeValues = validPositions.map((row) => row.altitude_ft).filter((value): value is number => value != null);
+    const speedValues = validPositions.map((row) => row.ground_speed_kt).filter((value): value is number => value != null);
+    return json(
+      {
+        aircraft: {
+          id: aircraft.id,
+          icao24: aircraft.icao24,
+          registration: aircraft.registration,
+          firstSeenAt: aircraft.first_seen_at,
+          lastSeenAt: aircraft.last_seen_at,
+        },
+        windowStart: windowStart.toISOString(),
+        windowEnd: windowEnd.toISOString(),
+        receivedAt: new Date().toISOString(),
+        summary: {
+          pointCount: validPositions.length,
+          sourceCount: new Set(validPositions.map((row) => row.data_sources?.[0]?.key).filter(Boolean)).size,
+          altitudeFt: {
+            min: altitudeValues.length > 0 ? Math.min(...altitudeValues) : null,
+            max: altitudeValues.length > 0 ? Math.max(...altitudeValues) : null,
+            average: altitudeValues.length > 0 ? altitudeValues.reduce((sum, value) => sum + value, 0) / altitudeValues.length : null,
+          },
+          groundSpeedKt: {
+            min: speedValues.length > 0 ? Math.min(...speedValues) : null,
+            max: speedValues.length > 0 ? Math.max(...speedValues) : null,
+            average: speedValues.length > 0 ? speedValues.reduce((sum, value) => sum + value, 0) / speedValues.length : null,
+          },
+        },
+      },
+      200,
+      origin,
+    );
+  }
+
+  if (action === "route-summary") {
+    const parsed = icaoSchema.safeParse(url.searchParams.get("icao24"));
+    const hours = Math.min(72, Math.max(1, Number(url.searchParams.get("hours") ?? 24)));
+    if (!parsed.success || !Number.isFinite(hours)) return json({ error: "invalid_track_query" }, 400, origin);
+    const windowEnd = new Date();
+    const windowStart = new Date(windowEnd.getTime() - hours * 3_600_000);
+    const { data: aircraft, error: aircraftError } = await database
+      .from("aircraft")
+      .select("id,icao24,registration,first_seen_at,last_seen_at")
+      .eq("icao24", parsed.data)
+      .maybeSingle();
+    if (aircraftError) return json({ error: "history_query_failed" }, 500, origin);
+    if (!aircraft) return json({ error: "aircraft_not_found" }, 404, origin);
+    const { data: positions, error: positionsError } = await database
+      .from("aircraft_positions")
+      .select("latitude,longitude,ground_speed_kt,observed_at")
+      .eq("aircraft_id", aircraft.id)
+      .gte("observed_at", windowStart.toISOString())
+      .lte("observed_at", windowEnd.toISOString())
+      .order("observed_at", { ascending: false })
+      .limit(10_001)
+      .abortSignal(AbortSignal.timeout(8_000));
+    if (positionsError) return json({ error: "history_query_failed" }, 500, origin);
+    const ordered = [...(positions ?? [])].reverse();
+    let totalDistanceNm = 0;
+    let loiteringMinutes = 0;
+    let currentLoiteringMinutes = 0;
+    const loiteringRadiusNm = 0.25;
+    const loiteringMinMinutes = 5;
+    for (let index = 1; index < ordered.length; index += 1) {
+      const previous = ordered[index - 1]!;
+      const current = ordered[index]!;
+      if (previous.latitude == null || previous.longitude == null || current.latitude == null || current.longitude == null) continue;
+      const gapMinutes = Math.max(0, (Date.parse(current.observed_at) - Date.parse(previous.observed_at)) / 60_000);
+      const distanceNm = Math.hypot(current.latitude - previous.latitude, current.longitude - previous.longitude) * 69;
+      totalDistanceNm += distanceNm;
+      if (distanceNm <= loiteringRadiusNm) {
+        currentLoiteringMinutes += gapMinutes;
+        if (currentLoiteringMinutes >= loiteringMinMinutes) loiteringMinutes = Math.max(loiteringMinutes, currentLoiteringMinutes);
+      } else {
+        currentLoiteringMinutes = 0;
+      }
+    }
+    const speeds = ordered.map((row) => row.ground_speed_kt).filter((value): value is number => value != null);
+    const durationMinutes = ordered.length > 1 ? Math.max(0, (Date.parse(ordered[ordered.length - 1]!.observed_at) - Date.parse(ordered[0]!.observed_at)) / 60_000) : 0;
+    return json(
+      {
+        aircraft: {
+          id: aircraft.id,
+          icao24: aircraft.icao24,
+          registration: aircraft.registration,
+          firstSeenAt: aircraft.first_seen_at,
+          lastSeenAt: aircraft.last_seen_at,
+        },
+        windowStart: windowStart.toISOString(),
+        windowEnd: windowEnd.toISOString(),
+        receivedAt: new Date().toISOString(),
+        summary: {
+          pointCount: ordered.length,
+          durationMinutes,
+          totalDistanceNm,
+          averageGroundSpeedKt: speeds.length > 0 ? speeds.reduce((sum, value) => sum + value, 0) / speeds.length : null,
+          loiteringDetected: loiteringMinutes >= loiteringMinMinutes,
+          loiteringMinutes,
+        },
+      },
+      200,
+      origin,
+    );
+  }
+
+  if (action === "nearby") {
+    const lat = Number(url.searchParams.get("lat"));
+    const lon = Number(url.searchParams.get("lon"));
+    const radiusNm = Number(url.searchParams.get("radiusNm") ?? 20);
+    const hours = Math.min(72, Math.max(1, Number(url.searchParams.get("hours") ?? 24)));
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(radiusNm)) return json({ error: "invalid_spatial_query" }, 400, origin);
+    const windowEnd = new Date();
+    const windowStart = new Date(windowEnd.getTime() - hours * 3_600_000);
+    const { data: positions, error: positionsError } = await database
+      .from("aircraft_positions")
+      .select("aircraft:aircraft_id(id,icao24,registration,first_seen_at,last_seen_at),latitude,longitude,altitude_ft,observed_at")
+      .gte("observed_at", windowStart.toISOString())
+      .lte("observed_at", windowEnd.toISOString())
+      .order("observed_at", { ascending: false })
+      .limit(5_000)
+      .abortSignal(AbortSignal.timeout(8_000));
+    if (positionsError) return json({ error: "history_query_failed" }, 500, origin);
+    const matches = (positions ?? [])
+      .map((row) => {
+        const aircraft = Array.isArray(row.aircraft) ? row.aircraft[0] : row.aircraft;
+        if (!aircraft || row.latitude == null || row.longitude == null) return null;
+        const distanceNm = Math.hypot(row.latitude - lat, row.longitude - lon) * 69;
+        if (distanceNm > radiusNm) return null;
+        return {
+          icao24: aircraft.icao24,
+          registration: aircraft.registration,
+          callsign: row.callsign ?? null,
+          latitude: row.latitude,
+          longitude: row.longitude,
+          observedAt: row.observed_at,
+          distanceNm,
+          altitudeFt: row.altitude_ft ?? null,
+        };
+      })
+      .filter((value): value is NonNullable<typeof value> => value != null)
+      .slice(0, 50);
+    return json({ query: { latitude: lat, longitude: lon, radiusNm }, receivedAt: new Date().toISOString(), matches }, 200, origin);
+  }
+
   if (action === "track") {
     const parsed = icaoSchema.safeParse(url.searchParams.get("icao24"));
     const hours = Math.min(24, Math.max(1, Number(url.searchParams.get("hours") ?? 24)));
