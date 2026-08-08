@@ -33,6 +33,7 @@ npm run build
 - Explicit provider-unconfigured, empty, refresh, and error states
 - Phase 1 PostGIS migration with RLS and service-only ingestion
 - Phase 2 authenticated registration/ICAO24/callsign search, atomic recorder transaction, 24-hour spatial replay, and per-source gap handling
+- Phase 3 groundwork for authenticated aircraft-profile contracts, FAA storage boundaries, owner/operator separation, and per-source statistics; real FAA import and public profile deployment remain gated
 
 Live aircraft remain blocked until the provider onboarding gate in `docs/provider-onboarding.md` is completed.
 
