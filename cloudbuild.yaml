@@ -1,0 +1,23 @@
+steps:
+  # Build the container image using the Dockerfile we just created
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'us-south1-docker.pkg.dev/signaltrace-505315/cloud-run-source-deploy/immahugeduck-airintel/airintel-google:$COMMIT_SHA', '.']
+
+  # Push the container image to Google Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-south1-docker.pkg.dev/signaltrace-505315/cloud-run-source-deploy/immahugeduck-airintel/airintel-google:$COMMIT_SHA']
+
+  # Deploy that image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    args:
+      - 'run'
+      - 'services'
+      - 'update'
+      - 'airintel-google'
+      - '--image=us-south1-docker.pkg.dev/signaltrace-505315/cloud-run-source-deploy/immahugeduck-airintel/airintel-google:$COMMIT_SHA'
+      - '--region=us-south1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+
+images:
+  - 'us-south1-docker.pkg.dev/signaltrace-505315/cloud-run-source-deploy/immahugeduck-airintel/airintel-google:$COMMIT_SHA'
