@@ -1,10 +1,21 @@
 # AIRIntel
 
-AIRIntel (AirRoute Intelligence) is an evidence-based live and historical aircraft analysis platform. Phase One establishes the Leaflet/MapQuest UI, strict aircraft observation contract, provider-neutral gateway boundary, and secured PostGIS foundation.
+AIRIntel (AirRoute Intelligence) is an evidence-based live and historical aircraft analysis platform. Phase One establishes the Leaflet/Mapbox UI, strict aircraft observation contract, provider-neutral gateway boundary, and secured PostGIS foundation.
 
 ## Real-data policy
 
-This repository contains no simulated or mock aircraft. Without approved MapQuest and aircraft-provider configuration, the application shows honest configuration-required states.
+This repository contains no simulated or mock aircraft. Without approved Mapbox and aircraft-provider configuration, the application shows honest configuration-required states.
+
+## Mapbox setup
+
+AIRIntel keeps Leaflet as the map engine and uses Mapbox Static Tiles as the basemap. The browser requires a **public Mapbox access token** beginning with `pk.`. Never use or commit a Mapbox secret token in frontend configuration.
+
+Two setup paths are supported:
+
+1. **Local browser setup:** Open **Map settings** in the live map, enter a public `pk.` token and a style such as `mapbox/streets-v12`, then save. The values are stored only in that browser's local storage.
+2. **Deployment/environment setup:** Set `VITE_MAPBOX_ACCESS_TOKEN` and `VITE_MAPBOX_STYLE` in the deployment environment. Do not commit real credentials to this repository.
+
+Accepted style input includes either `username/style-id` or `mapbox://styles/username/style-id`. The Leaflet Static Tiles integration currently cannot use Mapbox Standard/Standard Satellite; use a supported published classic/custom style such as `mapbox/streets-v12` or an eligible Mapbox Studio style.
 
 ## Local setup
 
@@ -27,7 +38,7 @@ npm run build
 ## Phase One status
 
 - React, Vite, strict TypeScript, Leaflet, TanStack Query, and Zod foundation
-- MapQuest layer activated only with approved browser configuration
+- Mapbox Static Tiles basemap with local setup dialog and environment-variable support
 - Canonical observation and radius-query validation
 - Provider-neutral interface and safe browser gateway client
 - Explicit provider-unconfigured, empty, refresh, and error states

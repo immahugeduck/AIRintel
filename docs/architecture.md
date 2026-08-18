@@ -6,14 +6,24 @@ Phase One is split into **1A: read-only live feed** and **1B: secured persistenc
 
 No keys or provider contract means an explicit configuration-required state. AIRIntel does not generate fallback aircraft, tracks, or provider responses.
 
+The map engine remains **Leaflet**. The basemap provider is **Mapbox Static Tiles**, which isolates aircraft overlays and route analytics from the basemap provider and avoids rewriting the existing Leaflet track rendering. Mapbox browser configuration uses only a public `pk.` access token. Secret Mapbox tokens are not accepted by the client configuration dialog.
+
 ## Boundaries
 
 - `src/domain`: strict Zod contracts, UTC timestamps, aviation units, provenance rules.
 - `src/providers`: provider-neutral interface and typed configuration errors.
 - `src/api`: safe browser client for a server-side aircraft gateway.
-- `src/components`: Leaflet/MapQuest presentation and evidence-oriented states.
+- `src/components`: Leaflet/Mapbox presentation, browser-safe basemap setup, and evidence-oriented states.
 - `supabase/functions`: server-only provider integration point.
 - `supabase/migrations`: PostGIS storage with RLS and no browser writes.
+
+## Basemap configuration
+
+- `VITE_MAPBOX_ACCESS_TOKEN`: public Mapbox access token beginning with `pk.`.
+- `VITE_MAPBOX_STYLE`: published Mapbox style in `username/style-id` form; defaults to `mapbox/streets-v12` in examples.
+- The in-app Map settings dialog can store the same public configuration in browser local storage for local development.
+- Production/deployed configuration belongs in the deployment environment, not committed source files.
+- Static Tiles are requested at 512px with Leaflet `tileSize: 512` and `zoomOffset: -1`.
 
 ## Provider gate
 
