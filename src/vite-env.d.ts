@@ -2,8 +2,8 @@
 
 interface ImportMetaEnv {
   readonly VITE_APP_NAME?: string;
-  readonly VITE_MAPQUEST_KEY?: string;
-  readonly VITE_MAPQUEST_TILE_URL?: string;
+  readonly VITE_MAPBOX_ACCESS_TOKEN?: string;
+  readonly VITE_MAPBOX_STYLE?: string;
   readonly VITE_AIRCRAFT_API_URL?: string;
   readonly VITE_HISTORY_API_URL?: string;
   readonly VITE_PROFILE_API_URL?: string;
