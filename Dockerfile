@@ -8,8 +8,8 @@ RUN npm run build
 
 # Stage 2: Serve the app using Nginx
 FROM nginx:alpine
-# Copy built files from Stage 1. 
-# NOTE: If your app uses Vite, change 'build' to 'dist'. If standard Create React App, keep 'build'.
+
+# Copy built files from Stage 1 (Change 'build' to 'dist' if you use Vite)
 COPY --from=builder /app/build /usr/share/nginx/html
 
 # Copy our custom Nginx config that listens on port 8080
