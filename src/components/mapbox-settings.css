@@ -1,0 +1,129 @@
+.map-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.mapbox-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(2, 8, 16, 0.78);
+  backdrop-filter: blur(10px);
+}
+
+.mapbox-dialog {
+  width: min(560px, 100%);
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  border: 1px solid rgba(110, 150, 185, 0.28);
+  border-radius: 20px;
+  background: #091725;
+  color: #e8f2fb;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.mapbox-dialog-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.mapbox-dialog-heading h3 {
+  margin: 0.25rem 0 0;
+  font-size: 1.25rem;
+}
+
+.mapbox-dialog-copy {
+  margin: 0;
+  color: #9aabba;
+  line-height: 1.55;
+}
+
+.mapbox-dialog label {
+  display: grid;
+  gap: 0.45rem;
+  color: #cbd7e2;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.mapbox-dialog input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 0.85rem;
+  border: 1px solid rgba(110, 150, 185, 0.22);
+  border-radius: 12px;
+  background: #06101d;
+  color: #eef5fb;
+}
+
+.mapbox-dialog input:focus-visible {
+  outline: 3px solid rgba(141, 233, 216, 0.8);
+  outline-offset: 2px;
+}
+
+.mapbox-dialog small {
+  color: #8499ad;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.mapbox-dialog-error {
+  margin: 0;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(242, 160, 165, 0.35);
+  border-radius: 12px;
+  background: rgba(89, 30, 36, 0.4);
+  color: #ffc7ca;
+}
+
+.mapbox-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.mapbox-save-button {
+  min-height: 42px;
+  padding: 0 1rem;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #49e0c5, #2dbfa3);
+  color: #06101d;
+  font-weight: 800;
+}
+
+.dialog-close {
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(110, 150, 185, 0.2);
+  border-radius: 50%;
+  background: #06101d;
+  color: #dce8f1;
+  font-size: 1.4rem;
+  line-height: 1;
+}
+
+@media (max-width: 640px) {
+  .map-heading-actions {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+
+  .mapbox-dialog-actions {
+    display: grid;
+  }
+
+  .mapbox-dialog-actions button {
+    width: 100%;
+  }
+}
