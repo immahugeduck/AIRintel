@@ -52,7 +52,7 @@ create table if not exists public.aircraft_aliases (
 create index if not exists aircraft_aliases_aircraft_idx on public.aircraft_aliases (aircraft_id);
 create index if not exists aircraft_aliases_value_idx on public.aircraft_aliases (upper(alias_value) text_pattern_ops);
 alter table public.aircraft_aliases enable row level security;
-revoke all on public.aircraft_aliases from anon, authenticated;
+revoke all on public.aircraft_aliases from public;
 
 create index if not exists flights_aircraft_started_idx on public.flights (aircraft_id, started_at desc);
 
@@ -86,7 +86,7 @@ alter table public.flights enable row level security;
 alter table public.flight_positions enable row level security;
 alter table public.ingestion_runs enable row level security;
 
-revoke all on public.flights, public.flight_positions, public.ingestion_runs from anon, authenticated;
+revoke all on public.flights, public.flight_positions, public.ingestion_runs from public;
 
 create or replace function public.record_aircraft_observation(input jsonb)
 returns boolean
@@ -140,7 +140,7 @@ begin
   ) values (
     aircraft_uuid, source_uuid, nullif(input->>'providerRecordId', ''), input->>'dedupeKey', input->>'normalizationVersion',
     nullif(input->>'callsign', ''), nullif(input->>'registration', ''),
-    st_setsrid(st_makepoint((input->>'longitude')::double precision, (input->>'latitude')::double precision), 4326)::geography,
+    public.st_setsrid(public.st_makepoint((input->>'longitude')::double precision, (input->>'latitude')::double precision), 4326)::public.geography,
     (input->>'latitude')::double precision, (input->>'longitude')::double precision,
     (input->>'altitudeFt')::double precision, nullif(input->>'altitudeSource', ''),
     (input->>'geometricAltitudeFt')::double precision, (input->>'barometricAltitudeFt')::double precision,
@@ -162,12 +162,11 @@ begin
 end;
 $$;
 
-revoke all on function public.record_aircraft_observation(jsonb) from public, anon, authenticated;
-grant execute on function public.record_aircraft_observation(jsonb) to service_role;
+-- Only the owner (the application role) may execute the recorder.
+revoke all on function public.record_aircraft_observation(jsonb) from public;
 
-alter default privileges in schema public revoke all on tables from anon, authenticated;
-alter default privileges in schema public revoke all on sequences from anon, authenticated;
-alter default privileges in schema public revoke execute on functions from public, anon, authenticated;
+alter default privileges in schema public revoke execute on functions from public;
 
--- Browser access remains unavailable. Server-side Edge Functions use the secret/service
--- role and return narrowly validated DTOs after provider redistribution terms are approved.
+-- Browser access remains unavailable. The server-side API (server/) uses the
+-- application role and returns narrowly validated DTOs after provider
+-- redistribution terms are approved.

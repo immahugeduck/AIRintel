@@ -4,6 +4,7 @@ import { fetchAircraft } from "./api/aircraft";
 import { fetchNearbyAircraft, fetchRecentTrack, fetchRouteSummary, fetchTrackInsights, searchAircraft } from "./api/history";
 import { fetchAircraftProfile } from "./api/profile";
 import { AircraftProfilePanel } from "./components/AircraftProfilePanel";
+import { AuthPanel } from "./components/AuthPanel";
 import { LiveMap } from "./components/LiveMap";
 import { ReplayPanel } from "./components/ReplayPanel";
 import { AuthenticationRequiredError, ProviderNotConfiguredError } from "./providers/contracts";
@@ -91,6 +92,7 @@ export default function App() {
             <option value="analytics">Analytics</option>
           </select>
         </label>
+        <AuthPanel />
         <div className="system-state"><span className="pulse" />{sourceState}</div>
       </header>
       <main id="main">
@@ -131,7 +133,7 @@ export default function App() {
           </div>
           <form className="history-search" onSubmit={(event) => { event.preventDefault(); setSubmittedSearch(searchInput.trim()); setSelectedIcao24(null); goToSection("history-results"); }}>
             <label htmlFor="history-search">Search recorded aircraft</label>
-            <div><input id="history-search" value={searchInput} minLength={2} maxLength={24} pattern="[A-Za-z0-9-]+" placeholder="Registration or ICAO24" onChange={(event) => setSearchInput(event.currentTarget.value)} /><button type="submit">Search history</button></div>
+            <div><input id="history-search" value={searchInput} minLength={2} maxLength={24} pattern="[A-Za-z0-9\-]+" placeholder="Registration or ICAO24" onChange={(event) => setSearchInput(event.currentTarget.value)} /><button type="submit">Search history</button></div>
           </form>
         </section>
         {submittedSearch && (

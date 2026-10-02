@@ -15,6 +15,21 @@ RUN npm ci
 # Copy the rest of the application source code
 COPY . .
 
+# Public (browser-safe) build-time configuration. Vite inlines these into the bundle.
+# Never pass secrets here. Values come from Cloud Build substitutions (see cloudbuild.yaml).
+ARG VITE_MAPBOX_ACCESS_TOKEN=""
+ARG VITE_MAPBOX_STYLE="mapbox/streets-v12"
+ARG VITE_NEON_AUTH_URL=""
+ARG VITE_AIRCRAFT_API_URL=""
+ARG VITE_HISTORY_API_URL=""
+ARG VITE_PROFILE_API_URL=""
+ENV VITE_MAPBOX_ACCESS_TOKEN=$VITE_MAPBOX_ACCESS_TOKEN \
+    VITE_MAPBOX_STYLE=$VITE_MAPBOX_STYLE \
+    VITE_NEON_AUTH_URL=$VITE_NEON_AUTH_URL \
+    VITE_AIRCRAFT_API_URL=$VITE_AIRCRAFT_API_URL \
+    VITE_HISTORY_API_URL=$VITE_HISTORY_API_URL \
+    VITE_PROFILE_API_URL=$VITE_PROFILE_API_URL
+
 # Build the static site (generates the /app/dist directory)
 RUN npm run build
 

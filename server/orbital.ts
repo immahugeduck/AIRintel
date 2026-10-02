@@ -1,4 +1,4 @@
-import * as sat from "npm:satellite.js@7.0.1";
+import * as sat from "satellite.js";
 
 export const PROPAGATION_LIBRARY = "satellite.js";
 export const PROPAGATION_VERSION = "7.0.1";

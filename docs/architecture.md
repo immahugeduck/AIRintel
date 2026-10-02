@@ -14,8 +14,9 @@ The map engine remains **Leaflet**. The basemap provider is **Mapbox Static Tile
 - `src/providers`: provider-neutral interface and typed configuration errors.
 - `src/api`: safe browser client for a server-side aircraft gateway.
 - `src/components`: Leaflet/Mapbox presentation, browser-safe basemap setup, and evidence-oriented states.
-- `supabase/functions`: server-only provider integration point.
-- `supabase/migrations`: PostGIS storage with RLS and no browser writes.
+- `server`: Hono API (Neon Function entry `functions/api.ts`, declared in `neon.ts`); the server-only provider integration point. Verifies Neon Auth JWTs and per-user access grants.
+- `db/migrations`: Neon Postgres/PostGIS storage with RLS and no browser access (`db/repeatable` re-asserts the lockdown on every migrate).
+- `src/lib/auth.ts`: Neon Auth (Managed Better Auth) browser client; supplies the Bearer JWT to the gateways.
 
 ## Basemap configuration
 
