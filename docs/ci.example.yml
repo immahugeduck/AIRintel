@@ -1,0 +1,25 @@
+# Copy to .github/workflows/ci.yml (pushing workflow files needs a token with the `workflow` scope).
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # Unit tests only. server/neon.integration.test.ts is skipped unless TEST_DATABASE_URL and
+      # TEST_NEON_AUTH_BASE_URL point at a throwaway Neon branch (add them as repository secrets to enable it).
+      - run: npm test
+        env:
+          TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL }}
+          TEST_NEON_AUTH_BASE_URL: ${{ secrets.TEST_NEON_AUTH_BASE_URL }}
+      - run: npm run build

@@ -691,3 +691,15 @@ footer {
 @media (prefers-reduced-motion: reduce) {
 	* { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
 }
+
+/* Neon Auth sign-in */
+.auth-panel { position: relative; display: flex; align-items: center; gap: .6rem; font-size: .85rem; }
+.auth-note { color: var(--text-muted); }
+.auth-panel > button, .auth-actions button { border: 1px solid var(--panel-border-strong); background: var(--accent-soft); color: inherit; border-radius: .5rem; padding: .35rem .8rem; }
+.auth-panel button:hover:not(:disabled) { border-color: var(--accent); }
+.auth-form { position: absolute; top: calc(100% + .5rem); right: 0; z-index: 1000; display: grid; gap: .6rem; min-width: 18rem; padding: 1rem; background: var(--panel); border: 1px solid var(--panel-border-strong); border-radius: .75rem; }
+.auth-form label { display: grid; gap: .25rem; color: var(--text-muted); }
+.auth-form input { padding: .45rem .6rem; border-radius: .4rem; border: 1px solid var(--panel-border-strong); background: var(--bg); color: inherit; }
+.auth-actions { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+.auth-actions .auth-link { border: 0; background: none; color: var(--accent); padding: 0; text-decoration: underline; }
+.auth-error { margin: 0; color: var(--warning); }

@@ -47,8 +47,7 @@ begin
 end;
 $$;
 
-revoke all on function public.purge_expired_faa_registry_raw() from public, anon, authenticated;
-grant execute on function public.purge_expired_faa_registry_raw() to service_role;
+revoke all on function public.purge_expired_faa_registry_raw() from public;
 
 create table if not exists public.aircraft_registry_records (
   id uuid primary key default gen_random_uuid(),
@@ -116,14 +115,14 @@ alter table public.aircraft_operator_associations enable row level security;
 alter table airintel_private.faa_import_runs enable row level security;
 alter table airintel_private.faa_registry_raw enable row level security;
 
-revoke all on public.aircraft_registry_records, public.aircraft_registry_matches, public.aircraft_operator_associations from anon, authenticated;
-revoke all on airintel_private.faa_import_runs, airintel_private.faa_registry_raw from public, anon, authenticated;
+revoke all on public.aircraft_registry_records, public.aircraft_registry_matches, public.aircraft_operator_associations from public;
+revoke all on airintel_private.faa_import_runs, airintel_private.faa_registry_raw from public;
 
--- Edge Functions use the service role after independently authenticating and
--- authorizing the caller. Browser roles never receive direct table access.
-grant select on public.aircraft_registry_records, public.aircraft_registry_matches, public.aircraft_operator_associations to service_role;
+-- The server-side API authenticates and authorizes the caller (JWT + access
+-- grants) before using the application role. Browser roles never receive direct
+-- table access.
 
-alter default privileges in schema public revoke all on tables from anon, authenticated;
-alter default privileges in schema public revoke all on sequences from anon, authenticated;
-alter default privileges in schema airintel_private revoke all on tables from public, anon, authenticated;
-alter default privileges in schema airintel_private revoke all on sequences from public, anon, authenticated;
+alter default privileges in schema public revoke all on tables from public;
+alter default privileges in schema public revoke all on sequences from public;
+alter default privileges in schema airintel_private revoke all on tables from public;
+alter default privileges in schema airintel_private revoke all on sequences from public;

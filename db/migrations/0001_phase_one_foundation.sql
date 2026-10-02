@@ -1,8 +1,11 @@
-create extension if not exists postgis;
+create extension if not exists postgis with schema public;
 create extension if not exists pgcrypto;
 
 create schema if not exists airintel_private;
-revoke all on schema airintel_private from public, anon, authenticated;
+-- Only the application (owner) role may use this schema. Browser-facing roles
+-- (Neon Data API `authenticated`/`anonymous`) are locked out by
+-- db/repeatable/R__lock_down_browser_roles.sql, which runs on every migrate.
+revoke all on schema airintel_private from public;
 
 create table if not exists public.data_sources (
   id uuid primary key default gen_random_uuid(),
@@ -70,8 +73,9 @@ alter table public.aircraft enable row level security;
 alter table public.aircraft_positions enable row level security;
 alter table airintel_private.raw_observations enable row level security;
 
-revoke all on all tables in schema public from anon, authenticated;
-revoke all on all tables in schema airintel_private from anon, authenticated;
+revoke all on all tables in schema public from public;
+revoke all on all tables in schema airintel_private from public;
 
--- Ingestion uses the server-side service role. Public read policies are deliberately
--- absent until provider redistribution terms and deployment access rules are approved.
+-- Ingestion and reads use the server-side application role (the database owner,
+-- which bypasses RLS). Public read policies are deliberately absent until
+-- provider redistribution terms and deployment access rules are approved.

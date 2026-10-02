@@ -4,7 +4,7 @@
 
 AIRIntel remains the canonical application and architecture. Skywatch is treated as a feature donor, not as a second runtime or framework to merge wholesale.
 
-Do **not** import Skywatch's Express + Drizzle workspace architecture into AIRIntel. Port useful algorithms, contracts, UI concepts, and data semantics into AIRIntel's existing React/Vite + Supabase Edge Functions + PostgreSQL/PostGIS boundaries.
+Do **not** import Skywatch's Express + Drizzle workspace architecture into AIRIntel. Port useful algorithms, contracts, UI concepts, and data semantics into AIRIntel's existing React/Vite + Hono API (Neon Functions) + Neon PostgreSQL/PostGIS boundaries.
 
 The integration branch is `integration/skywatch`. `main` must remain unchanged until each slice passes typecheck, tests, build, and review.
 
@@ -33,8 +33,7 @@ AIRIntel targets:
 - `src/api/satellites.ts`
 - `src/components/SkyWatchPanel.tsx`
 - `src/components/SatelliteLayer.tsx`
-- `supabase/functions/satellites-nearby/index.ts`
-- `supabase/functions/satellite-passes/index.ts`
+- `server/routes/satellites.ts` (`/satellites-nearby`, `/satellite-passes`; propagation in `server/orbital.ts`)
 
 ### P1 — Contact events
 

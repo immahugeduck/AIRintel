@@ -7,4 +7,6 @@ coverage/
 .DS_Store
 *.log
 *.tsbuildinfo
-.supabase/
+
+# Neon CLI link context
+.neon

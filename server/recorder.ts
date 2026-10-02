@@ -1,5 +1,5 @@
-import type { SupabaseClient } from "npm:@supabase/supabase-js@2.55.0";
-import { z } from "npm:zod@4.0.15";
+import { z } from "zod";
+import type { Queryable } from "./db";
 
 const nullableText = z.string().trim().min(1).nullable().optional();
 const recorderObservationSchema = z.object({
@@ -32,7 +32,7 @@ const recorderObservationSchema = z.object({
 export type RecorderObservation = z.input<typeof recorderObservationSchema>;
 export type RecordResult = { received: number; inserted: number; duplicate: number; rejected: number };
 
-export async function recordObservations(database: SupabaseClient, input: RecorderObservation[]): Promise<RecordResult> {
+export async function recordObservations(database: Queryable, input: RecorderObservation[]): Promise<RecordResult> {
   const result: RecordResult = { received: input.length, inserted: 0, duplicate: 0, rejected: 0 };
   for (const candidate of input) {
     const parsed = recorderObservationSchema.safeParse(candidate);
@@ -41,10 +41,13 @@ export async function recordObservations(database: SupabaseClient, input: Record
     const dedupeKey = observation.providerRecordId
       ? [observation.provider, "record", observation.providerRecordId].join(":")
       : [observation.provider, observation.icao24, new Date(observation.observedAt).toISOString()].join(":");
-    const { data, error } = await database.rpc("record_aircraft_observation", { input: { ...observation, dedupeKey } });
-    if (error) { result.rejected += 1; continue; }
-    if (data === true) result.inserted += 1;
-    else result.duplicate += 1;
+    try {
+      const { rows } = await database.query<{ inserted: boolean }>("select public.record_aircraft_observation($1::jsonb) as inserted", [JSON.stringify({ ...observation, dedupeKey })]);
+      if (rows[0]?.inserted === true) result.inserted += 1;
+      else result.duplicate += 1;
+    } catch {
+      result.rejected += 1;
+    }
   }
   return result;
 }

@@ -27,7 +27,7 @@ Statistics are grouped by provider, cover an explicit UTC window, include only o
 ## Deployment gates
 
 - Import an official FAA snapshot through a hardened staging/validation workflow.
-- Apply migrations and run Supabase database/security advisors in staging.
+- Apply migrations (`npm run db:migrate`) to a staging Neon branch and review Neon's schema/security checks (Data API advisors are not applicable while the Data API stays disabled).
 - Verify role and grant matrices for anonymous, authenticated, profile-authorized, importer, and administrative identities.
 - Replace process-local rate limits with a durable distributed limiter before public exposure.
 - Implement transactional stage/publish/match processing, make unresolved conflicts dominant, and select only published time-applicable FAA snapshots.

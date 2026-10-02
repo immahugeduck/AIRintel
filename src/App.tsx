@@ -4,6 +4,7 @@ import { fetchAircraft } from "./api/aircraft";
 import { fetchNearbyAircraft, fetchRecentTrack, fetchRouteSummary, fetchTrackInsights, searchAircraft } from "./api/history";
 import { fetchAircraftProfile } from "./api/profile";
 import { AircraftProfilePanel } from "./components/AircraftProfilePanel";
+import { AuthPanel } from "./components/AuthPanel";
 import { LiveMap } from "./components/LiveMap";
 import { ReplayPanel } from "./components/ReplayPanel";
 import { AuthenticationRequiredError, ProviderNotConfiguredError } from "./providers/contracts";
@@ -91,6 +92,7 @@ export default function App() {
             <option value="analytics">Analytics</option>
           </select>
         </label>
+        <AuthPanel />
         <div className="system-state"><span className="pulse" />{sourceState}</div>
       </header>
       <main id="main">

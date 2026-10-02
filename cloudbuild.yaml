@@ -1,7 +1,25 @@
+substitutions:
+  # Public values only; override in the Cloud Build trigger. Empty = feature shows its "configuration required" state.
+  _VITE_NEON_AUTH_URL: ''
+  _VITE_HISTORY_API_URL: ''
+  _VITE_PROFILE_API_URL: ''
+  _VITE_AIRCRAFT_API_URL: ''
+  _VITE_MAPBOX_ACCESS_TOKEN: ''
+
 steps:
   # Build the container image using the Dockerfile we just created
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'us-south1-docker.pkg.dev/signaltrace-505315/cloud-run-source-deploy/immahugeduck-airintel/airintel-google:$COMMIT_SHA', '.']
+    args:
+      - 'build'
+      - '-t'
+      - 'us-south1-docker.pkg.dev/signaltrace-505315/cloud-run-source-deploy/immahugeduck-airintel/airintel-google:$COMMIT_SHA'
+      # Public browser config for the Vite build. Set these as trigger substitutions (no secrets).
+      - '--build-arg=VITE_NEON_AUTH_URL=${_VITE_NEON_AUTH_URL}'
+      - '--build-arg=VITE_HISTORY_API_URL=${_VITE_HISTORY_API_URL}'
+      - '--build-arg=VITE_PROFILE_API_URL=${_VITE_PROFILE_API_URL}'
+      - '--build-arg=VITE_AIRCRAFT_API_URL=${_VITE_AIRCRAFT_API_URL}'
+      - '--build-arg=VITE_MAPBOX_ACCESS_TOKEN=${_VITE_MAPBOX_ACCESS_TOKEN}'
+      - '.'
 
   # Push the container image to Google Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'

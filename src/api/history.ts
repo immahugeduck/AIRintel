@@ -1,5 +1,5 @@
 import { aircraftSearchResponseSchema, nearbyAircraftResponseSchema, routeSummaryResponseSchema, trackResponseSchema, trackInsightsResponseSchema, type NearbyAircraftQuery, type RouteSummaryQuery, type TrackInsightsQuery } from "../domain/aircraft";
-import { getSupabaseClient } from "../lib/supabase";
+import { getAccessToken, getAuthClient } from "../lib/auth";
 import { AuthenticationRequiredError, ProviderNotConfiguredError } from "../providers/contracts";
 
 const endpoint = () => {
@@ -9,10 +9,8 @@ const endpoint = () => {
 };
 
 async function getJson(url: URL, signal?: AbortSignal) {
-  const supabase = getSupabaseClient();
-  if (!supabase) throw new ProviderNotConfiguredError();
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
+  if (!getAuthClient()) throw new ProviderNotConfiguredError();
+  const token = await getAccessToken();
   if (!token) throw new AuthenticationRequiredError();
   const response = await fetch(url, { ...(signal ? { signal } : {}), headers: { Accept: "application/json", Authorization: `Bearer ${token}` } });
   if (!response.ok) throw new Error(`History gateway returned ${response.status}`);
