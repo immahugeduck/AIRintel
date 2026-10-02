@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Queryable } from "./db";
+import type { Queryable } from "./db.js";
 
 const nullableText = z.string().trim().min(1).nullable().optional();
 const recorderObservationSchema = z.object({

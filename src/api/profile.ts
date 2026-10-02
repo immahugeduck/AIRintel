@@ -1,4 +1,5 @@
 import { aircraftProfileSchema } from "../domain/profile";
+import { resolveApiUrl } from "../lib/api-url";
 import { getAccessToken, getAuthClient } from "../lib/auth";
 import { AuthenticationRequiredError, ProviderNotConfiguredError } from "../providers/contracts";
 
@@ -10,7 +11,7 @@ export async function fetchAircraftProfile(icao24: string, signal?: AbortSignal)
   if (!getAuthClient()) throw new ProviderNotConfiguredError();
   const token = await getAccessToken();
   if (!token) throw new AuthenticationRequiredError();
-  const url = new URL(endpoint);
+  const url = resolveApiUrl(endpoint);
   url.searchParams.set("icao24", normalized);
   const response = await fetch(url, { ...(signal ? { signal } : {}), headers: { Accept: "application/json", Authorization: `Bearer ${token}` } });
   if (!response.ok) throw new Error(`Aircraft profile gateway returned ${response.status}`);

@@ -1,6 +1,6 @@
 import type { Context, MiddlewareHandler } from "hono";
-import { bearerToken, hasScope, type AccessScope, type AuthenticatedUser, type RateLimiter, type TokenVerifier } from "./auth";
-import type { Queryable } from "./db";
+import { bearerToken, hasScope, type AccessScope, type AuthenticatedUser, type RateLimiter, type TokenVerifier } from "./auth.js";
+import type { Queryable } from "./db.js";
 
 export type AppVariables = { origin: string; user: AuthenticatedUser };
 export type AppContext = Context<{ Variables: AppVariables }>;
@@ -10,9 +10,13 @@ const baseHeaders = { Vary: "Origin", "Cache-Control": "no-store", Pragma: "no-c
 /** Rejects non-allow-listed origins, answers CORS preflight, and only permits GET. */
 export const originGuard = (allowedOrigins: ReadonlySet<string>): MiddlewareHandler<{ Variables: AppVariables }> => async (c, next) => {
   const origin = c.req.header("origin") ?? "";
-  if (!allowedOrigins.has(origin)) return c.json({ error: "origin_not_allowed" }, 403, baseHeaders);
+  // Browsers omit Origin on same-origin GETs (SPA and API served from one Vercel project) but always send
+  // Sec-Fetch-Site, a forbidden header that page scripts cannot forge. Origin is a CORS hint, not authentication:
+  // protected routes still require a verified Neon Auth JWT plus an access grant.
+  const sameOrigin = origin === "" && c.req.header("sec-fetch-site") === "same-origin";
+  if (!sameOrigin && !allowedOrigins.has(origin)) return c.json({ error: "origin_not_allowed" }, 403, baseHeaders);
   c.set("origin", origin);
-  const cors = { ...baseHeaders, "Access-Control-Allow-Origin": origin, "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Allow-Headers": "Authorization, Content-Type" };
+  const cors = { ...baseHeaders, ...(origin ? { "Access-Control-Allow-Origin": origin } : {}), "Access-Control-Allow-Methods": "GET, OPTIONS", "Access-Control-Allow-Headers": "Authorization, Content-Type" };
   if (c.req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (c.req.method !== "GET") return c.json({ error: "method_not_allowed" }, 405, cors);
   for (const [name, value] of Object.entries(cors)) c.header(name, value);

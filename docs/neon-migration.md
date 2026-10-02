@@ -45,6 +45,10 @@ Nothing destructive happens to existing data (there was none to migrate). To go 
 3. OAuth providers (Google/GitHub) - one config switch in Neon plus a `signIn.social` button.
 4. Durable rate limiting and a scheduler for `purge_expired_faa_registry_raw()` (already listed as deployment gates in `docs/phase-three-aircraft-intelligence.md`).
 
+## Vercel hosting (phase 2)
+
+The API also runs as a Vercel function (`api/index.ts` mounts the Hono app under `/api`; `vercel.json` rewrites `/api/*`). The SPA calls it with relative URLs, and the origin guard accepts same-origin requests that carry no `Origin` header (`Sec-Fetch-Site: same-origin`). The Neon Function and Cloud Run files remain but are unused. Neon Auth only accepts sign-in from trusted domains, so each Vercel origin must be added in Neon Console → Auth → Configuration → Domains. See `deploy-checklist.md`.
+
 ## CI
 
 No GitHub Actions workflow existed. `docs/ci.example.yml` is a ready-to-copy workflow (typecheck, tests, build); it was not placed in `.github/workflows` because the automation token used for this migration cannot push workflow files.

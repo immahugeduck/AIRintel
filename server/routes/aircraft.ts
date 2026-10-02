@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { AppVariables } from "../http";
+import type { AppVariables } from "../http.js";
 
 const querySchema = z.object({
   lat: z.coerce.number().min(-90).max(90),

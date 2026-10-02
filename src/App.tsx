@@ -133,7 +133,7 @@ export default function App() {
           </div>
           <form className="history-search" onSubmit={(event) => { event.preventDefault(); setSubmittedSearch(searchInput.trim()); setSelectedIcao24(null); goToSection("history-results"); }}>
             <label htmlFor="history-search">Search recorded aircraft</label>
-            <div><input id="history-search" value={searchInput} minLength={2} maxLength={24} pattern="[A-Za-z0-9-]+" placeholder="Registration or ICAO24" onChange={(event) => setSearchInput(event.currentTarget.value)} /><button type="submit">Search history</button></div>
+            <div><input id="history-search" value={searchInput} minLength={2} maxLength={24} pattern="[A-Za-z0-9\-]+" placeholder="Registration or ICAO24" onChange={(event) => setSearchInput(event.currentTarget.value)} /><button type="submit">Search history</button></div>
           </form>
         </section>
         {submittedSearch && (

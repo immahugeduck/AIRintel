@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { AppVariables } from "../http";
-import { DEFAULT_GROUPS, fetchCelestrakGroups, predictPassesForRecord, propagateRecord, type CelestrakGroup } from "../orbital";
+import type { AppVariables } from "../http.js";
+import { DEFAULT_GROUPS, fetchCelestrakGroups, predictPassesForRecord, propagateRecord, type CelestrakGroup } from "../orbital.js";
 
 const allowedGroups = new Set<string>(DEFAULT_GROUPS);
 const PASS_GROUPS = new Set<CelestrakGroup>(["STATIONS", "VISUAL", "WEATHER", "IRIDIUM-NEXT"]);

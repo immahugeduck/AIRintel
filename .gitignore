@@ -10,3 +10,4 @@ coverage/
 
 # Neon CLI link context
 .neon
+.vercel

@@ -13,7 +13,7 @@ export const QUERY_TIMEOUT_MS = 8_000;
  * and reused across requests, which is what Neon recommends for long-running compute.
  */
 export function createPool(connectionString: string): pg.Pool {
-  const pool = new pg.Pool({ connectionString, max: 5, statement_timeout: QUERY_TIMEOUT_MS, idleTimeoutMillis: 30_000 });
+  const pool = new pg.Pool({ connectionString, max: process.env.VERCEL ? 3 : 5, statement_timeout: QUERY_TIMEOUT_MS, idleTimeoutMillis: 30_000 });
   // Neon scales to zero and the pooler reclaims idle clients; pg emits an error on the pool for those.
   // The pool has already discarded the dead client, so log and carry on instead of crashing the process.
   pool.on("error", (error) => console.warn("[db] idle client error:", error.message));

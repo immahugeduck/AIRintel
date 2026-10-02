@@ -1,7 +1,7 @@
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose";
 import { describe, expect, it } from "vitest";
-import { RateLimiter, bearerToken, createJwtVerifier, hasScope } from "./auth";
-import type { Queryable } from "./db";
+import { RateLimiter, bearerToken, createJwtVerifier, hasScope } from "./auth.js";
+import type { Queryable } from "./db.js";
 
 const baseUrl = "https://ep-test.neonauth.us-east-2.aws.neon.build/neondb/auth";
 const userId = "860dc360-609f-4b7d-9e70-ec93fe6414d3";

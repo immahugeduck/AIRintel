@@ -1,7 +1,7 @@
-import { createApp } from "./app";
-import { createJwtVerifier } from "./auth";
-import { readConfig } from "./config";
-import { createPool } from "./db";
+import { createApp } from "./app.js";
+import { createJwtVerifier } from "./auth.js";
+import { readConfig } from "./config.js";
+import { createPool } from "./db.js";
 
 const config = readConfig();
 

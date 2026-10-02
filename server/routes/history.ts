@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { iso, type Queryable } from "../db";
-import type { AppVariables } from "../http";
+import { iso, type Queryable } from "../db.js";
+import type { AppVariables } from "../http.js";
 
 const searchSchema = z.string().trim().min(2).max(24).regex(/^[a-zA-Z0-9-]+$/);
 const icaoSchema = z.string().trim().toLowerCase().regex(/^[0-9a-f]{6}$/);

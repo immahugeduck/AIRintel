@@ -1,4 +1,5 @@
 import { aircraftSearchResponseSchema, nearbyAircraftResponseSchema, routeSummaryResponseSchema, trackResponseSchema, trackInsightsResponseSchema, type NearbyAircraftQuery, type RouteSummaryQuery, type TrackInsightsQuery } from "../domain/aircraft";
+import { resolveApiUrl } from "../lib/api-url";
 import { getAccessToken, getAuthClient } from "../lib/auth";
 import { AuthenticationRequiredError, ProviderNotConfiguredError } from "../providers/contracts";
 
@@ -19,7 +20,7 @@ async function getJson(url: URL, signal?: AbortSignal) {
 
 export async function searchAircraft(search: string, signal?: AbortSignal) {
   const normalized = validateHistorySearch(search);
-  const url = new URL(endpoint());
+  const url = resolveApiUrl(endpoint());
   url.searchParams.set("action", "search");
   url.searchParams.set("q", normalized);
   return aircraftSearchResponseSchema.parse(await getJson(url, signal));
@@ -35,7 +36,7 @@ export function validateHistorySearch(search: string) {
 export async function fetchRecentTrack(icao24: string, signal?: AbortSignal) {
   const normalized = icao24.trim().toLowerCase();
   if (!/^[0-9a-f]{6}$/.test(normalized)) throw new Error("ICAO24 must be six hexadecimal characters");
-  const url = new URL(endpoint());
+  const url = resolveApiUrl(endpoint());
   url.searchParams.set("action", "track");
   url.searchParams.set("icao24", normalized);
   url.searchParams.set("hours", "24");
@@ -45,7 +46,7 @@ export async function fetchRecentTrack(icao24: string, signal?: AbortSignal) {
 export async function fetchTrackInsights(query: TrackInsightsQuery, signal?: AbortSignal) {
   const normalized = query.icao24.trim().toLowerCase();
   if (!/^[0-9a-f]{6}$/.test(normalized)) throw new Error("ICAO24 must be six hexadecimal characters");
-  const url = new URL(endpoint());
+  const url = resolveApiUrl(endpoint());
   url.searchParams.set("action", "insights");
   url.searchParams.set("icao24", normalized);
   url.searchParams.set("hours", String(Math.min(72, Math.max(1, query.hours ?? 24))));
@@ -55,7 +56,7 @@ export async function fetchTrackInsights(query: TrackInsightsQuery, signal?: Abo
 export async function fetchRouteSummary(query: RouteSummaryQuery, signal?: AbortSignal) {
   const normalized = query.icao24.trim().toLowerCase();
   if (!/^[0-9a-f]{6}$/.test(normalized)) throw new Error("ICAO24 must be six hexadecimal characters");
-  const url = new URL(endpoint());
+  const url = resolveApiUrl(endpoint());
   url.searchParams.set("action", "route-summary");
   url.searchParams.set("icao24", normalized);
   url.searchParams.set("hours", String(Math.min(72, Math.max(1, query.hours ?? 24))));
@@ -68,7 +69,7 @@ export async function fetchNearbyAircraft(query: NearbyAircraftQuery, signal?: A
     longitude: query.longitude,
     radiusNm: query.radiusNm,
   };
-  const url = new URL(endpoint());
+  const url = resolveApiUrl(endpoint());
   url.searchParams.set("action", "nearby");
   url.searchParams.set("lat", String(safeQuery.latitude));
   url.searchParams.set("lon", String(safeQuery.longitude));

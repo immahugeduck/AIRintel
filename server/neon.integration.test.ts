@@ -14,9 +14,9 @@ import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { aircraftSearchResponseSchema, nearbyAircraftResponseSchema, routeSummaryResponseSchema, trackInsightsResponseSchema, trackResponseSchema } from "../src/domain/aircraft";
 import { aircraftProfileSchema } from "../src/domain/profile";
-import { createApp } from "./app";
-import { createJwtVerifier } from "./auth";
-import { recordObservations, type RecorderObservation } from "./recorder";
+import { createApp } from "./app.js";
+import { createJwtVerifier } from "./auth.js";
+import { recordObservations, type RecorderObservation } from "./recorder.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const authUrl = process.env.TEST_NEON_AUTH_BASE_URL;

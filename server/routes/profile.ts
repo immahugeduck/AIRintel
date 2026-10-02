@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { iso, type Queryable } from "../db";
-import { percentile, type AppVariables } from "../http";
+import { iso, type Queryable } from "../db.js";
+import { percentile, type AppVariables } from "../http.js";
 
 const icaoSchema = z.string().trim().toLowerCase().regex(/^[0-9a-f]{6}$/);
 

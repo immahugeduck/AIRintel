@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createApp } from "./app";
-import type { TokenVerifier } from "./auth";
-import type { Queryable } from "./db";
+import { createApp } from "./app.js";
+import type { TokenVerifier } from "./auth.js";
+import type { Queryable } from "./db.js";
 
 const origin = "http://localhost:5173";
+const authed = { authorization: "Bearer good" };
 const userId = "860dc360-609f-4b7d-9e70-ec93fe6414d3";
 const verifier: TokenVerifier = async (token) => (token === "good" ? { id: userId, email: "pilot@example.com" } : null);
 
@@ -23,7 +24,6 @@ function fakeDb(grants: string[]): Queryable & { sql: string[] } {
 const build = (overrides: Partial<Parameters<typeof createApp>[0]> = {}) =>
   createApp({ db: fakeDb(["history", "profile"]), verifier, allowedOrigins: new Set([origin]), adsbConfigured: false, ...overrides });
 const get = (app: ReturnType<typeof createApp>, path: string, headers: Record<string, string> = {}) => app.request(path, { headers: { origin, ...headers } });
-const authed = { authorization: "Bearer good" };
 
 describe("origin and method guard", () => {
   it("rejects requests from origins that are not allow-listed", async () => {
@@ -38,6 +38,14 @@ describe("origin and method guard", () => {
     expect(response.status).toBe(204);
     expect(response.headers.get("access-control-allow-origin")).toBe(origin);
     expect(response.headers.get("access-control-allow-headers")).toContain("Authorization");
+  });
+
+  it("accepts same-origin GETs that carry no Origin header (SPA + API on one Vercel project)", async () => {
+    const app = build();
+    const sameOrigin = await app.request("/history?action=bogus", { headers: { "sec-fetch-site": "same-origin", ...authed } });
+    expect(sameOrigin.status).toBe(400); // passed the guard, auth and grant, failed validation
+    expect((await app.request("/history?action=bogus", { headers: { "sec-fetch-site": "cross-site", ...authed } })).status).toBe(403);
+    expect((await app.request("/history?action=bogus", { headers: authed })).status).toBe(403);
   });
 
   it("only allows GET", async () => {

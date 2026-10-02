@@ -19,7 +19,7 @@ Accepted style input includes either `username/style-id` or `mapbox://styles/use
 
 ## Stack
 
-React + Vite + strict TypeScript (browser) · Hono API in `server/` (Neon Function or any Node host) · **Neon** Postgres/PostGIS · **Neon Auth** (Managed Better Auth) · raw SQL via `pg` (no ORM) · Zod contracts.
+React + Vite + strict TypeScript (browser) · Hono API in `server/` (Vercel function via `api/index.ts`; also Neon Function, Cloud Run or any Node host) · **Neon** Postgres/PostGIS · **Neon Auth** (Managed Better Auth) · raw SQL via `pg` (no ORM) · Zod contracts.
 
 | Concern | Where |
 | --- | --- |
@@ -78,3 +78,8 @@ npm run build
 Live aircraft remain blocked until the provider onboarding gate in `docs/provider-onboarding.md` is completed.
 
 Phase Two implementation details and deployment gates are documented in `docs/phase-two-flight-recorder.md`.
+
+
+## Deploying to Vercel
+
+See [`docs/deploy-checklist.md`](docs/deploy-checklist.md). The SPA and the API ship as one Vercel project: `vercel.json` builds the Vite app and rewrites `/api/*` to `api/index.ts` (the Hono app). Set `VITE_*_API_URL` to the relative paths `/api/history`, `/api/aircraft-profile` and `/api/aircraft-nearby`.

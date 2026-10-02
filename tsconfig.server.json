@@ -16,5 +16,5 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true
   },
-  "include": ["server", "functions", "neon.ts"]
+  "include": ["server", "functions", "api", "neon.ts"]
 }

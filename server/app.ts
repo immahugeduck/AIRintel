@@ -1,11 +1,11 @@
 import { Hono } from "hono";
-import { RateLimiter, type TokenVerifier } from "./auth";
-import type { Queryable } from "./db";
-import { originGuard, requireAccess, type AppVariables } from "./http";
-import { aircraftRoutes } from "./routes/aircraft";
-import { historyRoutes } from "./routes/history";
-import { profileRoutes } from "./routes/profile";
-import { satellitePassesRoutes, satellitesNearbyRoutes } from "./routes/satellites";
+import { RateLimiter, type TokenVerifier } from "./auth.js";
+import type { Queryable } from "./db.js";
+import { originGuard, requireAccess, type AppVariables } from "./http.js";
+import { aircraftRoutes } from "./routes/aircraft.js";
+import { historyRoutes } from "./routes/history.js";
+import { profileRoutes } from "./routes/profile.js";
+import { satellitePassesRoutes, satellitesNearbyRoutes } from "./routes/satellites.js";
 
 export type AppDependencies = {
   /** Neon Postgres (pooled DATABASE_URL). Null makes protected routes answer 503 database_not_configured. */

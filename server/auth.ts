@@ -1,5 +1,5 @@
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
-import type { Queryable } from "./db";
+import type { Queryable } from "./db.js";
 
 export type AccessScope = "history" | "profile";
 export type AuthenticatedUser = { id: string; email: string | null };
