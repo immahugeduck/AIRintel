@@ -54,6 +54,26 @@ npm run dev         # terminal 2
 
 Configure only browser-safe values in `VITE_*`. Aircraft-provider credentials, `DATABASE_URL` and other server values belong in the API's environment (Neon Function env / `.env.local` for local runs), never in a `VITE_*` variable.
 
+
+## Vercel Blob evidence uploads
+
+AIRIntel can upload authenticated JPEG, PNG, and WebP evidence images to the Vercel Blob store connected to the Vercel project.
+
+- SDK: `@vercel/blob`
+- Upload endpoint: `POST /api/evidence/upload?filename=<name>`
+- View endpoint: `GET /api/evidence/view?pathname=<blob pathname>`
+- Uploads require Neon Auth plus the existing `history` access grant.
+- Server-upload limit is intentionally 4 MB. Use Vercel Blob client uploads later for larger images/video.
+- Set `BLOB_ACCESS=private` or `public` to match the Blob store's access mode. Private is recommended for investigation evidence.
+- New Vercel-connected Blob stores can authenticate from Vercel Functions through OIDC; do not expose Blob write credentials through a `VITE_` variable.
+
+For local development, link the project with the Vercel CLI and pull its environment when Blob credentials are needed:
+
+```bash
+vercel link
+vercel env pull .env.local
+```
+
 ## Verification
 
 ```powershell

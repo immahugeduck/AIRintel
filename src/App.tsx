@@ -6,6 +6,7 @@ import { fetchAircraftProfile } from "./api/profile";
 import { AircraftProfilePanel } from "./components/AircraftProfilePanel";
 import { AuthPanel } from "./components/AuthPanel";
 import { LiveMap } from "./components/LiveMap";
+import { EvidenceUploadPanel } from "./components/EvidenceUploadPanel";
 import { ReplayPanel } from "./components/ReplayPanel";
 import { AuthenticationRequiredError, ProviderNotConfiguredError } from "./providers/contracts";
 
@@ -157,6 +158,7 @@ export default function App() {
           </aside>
         </div>
         {profile.isFetching ? <p className="track-empty" role="status">Building the selected aircraft's sourced profile...</p> : profile.error instanceof ProviderNotConfiguredError ? selectedIcao24 && <p className="track-empty">Aircraft profile gateway and FAA registry snapshot configuration are required. No profile facts are fabricated.</p> : profile.error instanceof AuthenticationRequiredError ? <p className="track-empty">Authenticated profile access is required.</p> : profile.isError ? <p className="track-error" role="alert">Aircraft profile unavailable: {profile.error.message}</p> : profile.data ? <AircraftProfilePanel profile={profile.data} /> : null}
+        <EvidenceUploadPanel />
         <section className="analytics-grid" id="analytics">
           {track.isFetching ? <p className="track-empty" role="status">Loading the selected aircraft's recorded observations...</p> : track.error instanceof ProviderNotConfiguredError ? null : track.isError ? <p className="track-error" role="alert">Track unavailable: {track.error.message}</p> : track.data?.points.length === 0 ? <p className="track-empty">No observations were recorded for this aircraft in the selected 24-hour window.</p> : track.data ? <ReplayPanel points={track.data.points} aircraftLabel={track.data.aircraft.registration ?? track.data.aircraft.icao24} index={replayIndex} onIndexChange={setReplayIndex} /> : null}
           {insights.isFetching ? <p className="track-empty" role="status">Computing track insights...</p> : insights.error instanceof ProviderNotConfiguredError ? null : insights.isError ? <p className="track-error" role="alert">Insights unavailable: {insights.error.message}</p> : insights.data ? (
