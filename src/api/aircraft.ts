@@ -1,13 +1,9 @@
 import { aircraftResponseSchema, radiusQuerySchema, type RadiusQuery } from "../domain/aircraft";
-import { resolveApiUrl } from "../lib/api-url";
-import { ProviderNotConfiguredError } from "../providers/contracts";
+import { aircraftApiEndpoint, resolveApiUrl } from "../lib/api-url";
 
 export async function fetchAircraft(query: RadiusQuery, signal?: AbortSignal) {
-  const endpoint = import.meta.env.VITE_AIRCRAFT_API_URL;
-  if (!endpoint) throw new ProviderNotConfiguredError();
-
   const safe = radiusQuerySchema.parse(query);
-  const url = resolveApiUrl(endpoint);
+  const url = resolveApiUrl(aircraftApiEndpoint());
   url.searchParams.set("lat", String(safe.latitude));
   url.searchParams.set("lon", String(safe.longitude));
   url.searchParams.set("radiusNm", String(safe.radiusNm));

@@ -22,7 +22,7 @@ function fakeDb(grants: string[]): Queryable & { sql: string[] } {
 }
 
 const build = (overrides: Partial<Parameters<typeof createApp>[0]> = {}) =>
-  createApp({ db: fakeDb(["history", "profile"]), verifier, allowedOrigins: new Set([origin]), adsbConfigured: false, ...overrides });
+  createApp({ db: fakeDb(["history", "profile"]), verifier, allowedOrigins: new Set([origin]), adsb: null, ...overrides });
 const get = (app: ReturnType<typeof createApp>, path: string, headers: Record<string, string> = {}) => app.request(path, { headers: { origin, ...headers } });
 
 describe("origin and method guard", () => {
@@ -120,10 +120,10 @@ describe("public gateways", () => {
     expect(await response.json()).toEqual({ ok: true, database: true, auth: true });
   });
 
-  it("keeps the aircraft provider gated", async () => {
+  it("keeps the aircraft provider gated until configured", async () => {
     expect((await get(build(), "/aircraft-nearby?lat=1&lon=1&radiusNm=0")).status).toBe(400);
     expect((await get(build(), "/aircraft-nearby?lat=39&lon=-86&radiusNm=20")).status).toBe(503);
-    expect((await get(build({ adsbConfigured: true }), "/aircraft-nearby?lat=39&lon=-86&radiusNm=20")).status).toBe(501);
+    expect((await get(build({ adsb: { provider: "exchange", baseUrl: "https://example.test", apiKey: "x" } }), "/aircraft-nearby?lat=39&lon=-86&radiusNm=20")).status).toBe(501);
   });
 
   it("validates satellite queries before touching CelesTrak", async () => {

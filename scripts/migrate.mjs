@@ -14,10 +14,23 @@ const checksum = (sql) => createHash("sha256").update(sql).digest("hex");
 const client = await connect();
 try {
   await client.query("select pg_advisory_lock(hashtext('airintel:migrate'))");
-  await client.query("create schema if not exists airintel_private");
-  await client.query(`create table if not exists airintel_private.schema_migrations (
-    name text primary key, checksum text not null, applied_at timestamptz not null default now())`);
-  const applied = new Map((await client.query("select name, checksum from airintel_private.schema_migrations")).rows.map((row) => [row.name, row.checksum]));
+
+  if (!dryRun) {
+    await client.query("create schema if not exists airintel_private");
+    await client.query(`create table if not exists airintel_private.schema_migrations (
+      name text primary key, checksum text not null, applied_at timestamptz not null default now())`);
+    // Defense in depth: enable RLS on the migration ledger even though browser roles are revoked separately.
+    await client.query("alter table airintel_private.schema_migrations enable row level security");
+  }
+
+  let applied = new Map();
+  try {
+    applied = new Map((await client.query("select name, checksum from airintel_private.schema_migrations")).rows.map((row) => [row.name, row.checksum]));
+  } catch (error) {
+    if (!dryRun) throw error;
+    // Dry-run against a fresh database: report every migration as pending without creating objects.
+    console.log("dry-run: airintel_private.schema_migrations is absent; treating all migrations as pending.");
+  }
 
   let count = 0;
   for (const name of sqlFiles("migrations")) {
