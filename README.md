@@ -40,7 +40,7 @@ React + Vite + strict TypeScript (browser) · Hono API in `server/` (Vercel func
    (`history` = recorded-aircraft search/replay/analytics, `profile` = FAA-registry-backed profiles).
 7. **Deploy the API:** `ALLOWED_ORIGINS=https://your-app.example neon deploy` publishes the `api` Neon Function (`DATABASE_URL`, `NEON_AUTH_*` are injected). Put its invocation URL (`neon functions get api`) into `VITE_HISTORY_API_URL` (`<url>/history`), `VITE_PROFILE_API_URL` (`<url>/aircraft-profile`) and `VITE_AIRCRAFT_API_URL` (`<url>/aircraft-nearby`) and rebuild the UI. For Cloud Run, set the same values as the `_VITE_*` substitutions in the Cloud Build trigger (`cloudbuild.yaml`).
 
-There is no object storage dependency: AIRIntel stores no user files. See `docs/neon-migration.md` for the Supabase → Neon mapping and open decisions.
+Neon remains the structured-data/auth backend. Vercel Blob is now used separately for authenticated evidence-image storage. See `docs/neon-migration.md` for the Supabase → Neon mapping and remaining database decisions.
 
 ## Local setup
 
