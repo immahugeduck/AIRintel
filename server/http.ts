@@ -10,10 +10,10 @@ const baseHeaders = { Vary: "Origin", "Cache-Control": "no-store", Pragma: "no-c
 /** Rejects non-allow-listed origins, answers CORS preflight, and permits only the supplied methods. */
 export const originGuardForMethods = (allowedOrigins: ReadonlySet<string>, methods: readonly string[]): MiddlewareHandler<{ Variables: AppVariables }> => async (c, next) => {
   const origin = c.req.header("origin") ?? "";
-  // Browsers omit Origin on same-origin requests (SPA and API served from one Vercel project) but send
+  // Same-origin browser requests may include Origin (especially POSTs) and send
   // Sec-Fetch-Site, a forbidden header that page scripts cannot forge. Origin is a CORS hint, not authentication:
   // protected routes still require a verified Neon Auth JWT plus an access grant.
-  const sameOrigin = origin === "" && c.req.header("sec-fetch-site") === "same-origin";
+  const sameOrigin = c.req.header("sec-fetch-site") === "same-origin";
   if (!sameOrigin && !allowedOrigins.has(origin)) return c.json({ error: "origin_not_allowed" }, 403, baseHeaders);
   c.set("origin", origin);
   const allowMethods = [...new Set([...methods.map((method) => method.toUpperCase()), "OPTIONS"])];
