@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { RateLimiter, type TokenVerifier } from "./auth.js";
 import type { Queryable } from "./db.js";
 import { originGuard, originGuardForMethods, requireAccess, type AppVariables } from "./http.js";
+import type { AdsbProviderConfig } from "./providers/adsb.js";
 import { aircraftRoutes } from "./routes/aircraft.js";
 import { historyRoutes } from "./routes/history.js";
 import { evidenceRoutes } from "./routes/evidence.js";
@@ -14,7 +15,7 @@ export type AppDependencies = {
   /** Neon Auth JWT verifier. Null makes protected routes answer 503 database_not_configured. */
   verifier: TokenVerifier | null;
   allowedOrigins: ReadonlySet<string>;
-  adsbConfigured: boolean;
+  adsb: AdsbProviderConfig | null;
   historyRateLimit?: number;
   profileRateLimit?: number;
 };
@@ -37,7 +38,7 @@ export function createApp(deps: AppDependencies) {
   app.get("/health", (c) => c.json({ ok: true, database: deps.db !== null, auth: deps.verifier !== null }));
 
   app.use("/aircraft-nearby", guard);
-  app.route("/aircraft-nearby", aircraftRoutes({ providerConfigured: deps.adsbConfigured }));
+  app.route("/aircraft-nearby", aircraftRoutes({ adsb: deps.adsb }));
 
   app.use("/satellites-nearby", guard);
   app.route("/satellites-nearby", satellitesNearbyRoutes());

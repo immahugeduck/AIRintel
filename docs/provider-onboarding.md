@@ -55,3 +55,24 @@ A propagated satellite coordinate is **Calculated** from an orbital element set.
 Real captured payload fixtures may be added only when provider terms allow it and sensitive values are redacted. They must never be invented and labeled as provider data.
 
 Synthetic fixtures are permitted for unit tests only when they are conspicuously labeled as synthetic/test vectors and are never exposed as real-world observations.
+
+## Documented aircraft provider: adsb.lol
+
+Status: **approved for the live `/aircraft-nearby` gateway** (public community feed).
+
+| Field | Value |
+| --- | --- |
+| Vendor / product | adsb.lol open data API (readsb/tar1090-compatible JSON) |
+| Docs | https://www.adsb.lol/docs/open-data/api/ and https://api.adsb.lol/docs |
+| Auth | None for anonymous read. Optional future feeder API keys are not required. |
+| Query | `GET {base}/v2/lat/{lat}/lon/{lon}/dist/{radiusNm}` — radius in **nautical miles**, max 250 |
+| Default base | `https://api.adsb.lol` |
+| Units | lat/lon decimal degrees; `alt_*` feet; `gs` knots; `track` degrees; `*_rate` ft/min; `seen` / `seen_pos` seconds |
+| Null / sentinels | Missing lat/lon → drop row. `alt_baro` may be the string `"ground"`. `emergency: "none"` → treat as absent |
+| Timestamps | Response `now` is Unix epoch **milliseconds**. Observation time ≈ `now - seen_pos*1000` (fallback `seen`) |
+| Rate limits | Dynamic / load-based. Treat 429/5xx as upstream failure; do not invent aircraft |
+| Licensing | ODbL 1.0 — preserve attribution in product docs; do not claim ownership of raw ADS-B |
+| Cache | No long-term redistribution of raw payloads beyond the flight-recorder tables AIRIntel already gates behind auth |
+| AIRIntel env | `ADSB_PROVIDER=adsb_lol` (default when unset). `ADSB_PROVIDER=off` disables. `ADSB_API_BASE_URL` optional override |
+
+OpenSky and keyed commercial ADS-B products remain gated until their rows in this document are completed.

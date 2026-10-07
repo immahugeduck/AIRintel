@@ -29,7 +29,7 @@ export default function App() {
   const aircraft = useQuery({
     queryKey: ["aircraft", query],
     queryFn: ({ signal }) => fetchAircraft(query, signal),
-    refetchInterval: import.meta.env.VITE_AIRCRAFT_API_URL ? pollMs : false,
+    refetchInterval: pollMs,
     retry: (count, error) => !(error instanceof ProviderNotConfiguredError) && count < 2,
   });
   const search = useQuery({
@@ -65,7 +65,7 @@ export default function App() {
   const nearby = useQuery({
     queryKey: ["nearby-aircraft", latitude, longitude, radiusNm],
     queryFn: ({ signal }) => fetchNearbyAircraft({ latitude, longitude, radiusNm, hours: 24 }, signal),
-    enabled: Boolean(import.meta.env.VITE_HISTORY_API_URL),
+    enabled: true,
     retry: false,
   });
 
@@ -147,7 +147,7 @@ export default function App() {
           <aside className="intel-panel section-panel" aria-labelledby="intel-heading">
             <div className="panel-heading"><div><p className="eyebrow">Data health</p><h2 id="intel-heading">Aircraft observations</h2></div><span className="count">{aircraft.data?.observations.length ?? 0}</span></div>
             {aircraft.error instanceof ProviderNotConfiguredError ? (
-              <div className="empty-state"><div className="empty-icon" aria-hidden="true">AIR</div><h3>Live provider not configured</h3><p>No aircraft are displayed because AIRIntel will not fabricate observations. Add a documented server-side provider gateway to begin.</p><code>VITE_AIRCRAFT_API_URL</code></div>
+              <div className="empty-state"><div className="empty-icon" aria-hidden="true">AIR</div><h3>Live provider not configured</h3><p>No aircraft are displayed because AIRIntel will not fabricate observations. Set <code>ADSB_PROVIDER=adsb_lol</code> on the API host (see docs/provider-onboarding.md).</p></div>
             ) : aircraft.isError ? (
               <div className="empty-state error" role="alert"><h3>Aircraft feed unavailable</h3><p>{aircraft.error.message}</p></div>
             ) : aircraft.data?.observations.length === 0 ? (

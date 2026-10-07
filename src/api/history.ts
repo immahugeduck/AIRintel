@@ -1,13 +1,9 @@
 import { aircraftSearchResponseSchema, nearbyAircraftResponseSchema, routeSummaryResponseSchema, trackResponseSchema, trackInsightsResponseSchema, type NearbyAircraftQuery, type RouteSummaryQuery, type TrackInsightsQuery } from "../domain/aircraft";
-import { resolveApiUrl } from "../lib/api-url";
+import { historyApiEndpoint, resolveApiUrl } from "../lib/api-url";
 import { getAccessToken, getAuthClient } from "../lib/auth";
 import { AuthenticationRequiredError, ProviderNotConfiguredError } from "../providers/contracts";
 
-const endpoint = () => {
-  const value = import.meta.env.VITE_HISTORY_API_URL;
-  if (!value) throw new ProviderNotConfiguredError();
-  return value;
-};
+const endpoint = () => historyApiEndpoint();
 
 async function getJson(url: URL, signal?: AbortSignal) {
   if (!getAuthClient()) throw new ProviderNotConfiguredError();

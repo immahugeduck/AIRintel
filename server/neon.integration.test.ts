@@ -55,7 +55,7 @@ describe.skipIf(!databaseUrl || !authUrl)("Neon Postgres + Neon Auth (integratio
 
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: databaseUrl, max: 2 });
-    app = createApp({ db: pool, verifier: createJwtVerifier({ baseUrl: authUrl! }), allowedOrigins: new Set([origin]), adsbConfigured: false, historyRateLimit: 1000, profileRateLimit: 1000 });
+    app = createApp({ db: pool, verifier: createJwtVerifier({ baseUrl: authUrl! }), allowedOrigins: new Set([origin]), adsb: null, historyRateLimit: 1000, profileRateLimit: 1000 });
     node("scripts/migrate.mjs");
     node("scripts/migrate.mjs"); // idempotent
     const base = Date.now() - 3 * 3_600_000;
