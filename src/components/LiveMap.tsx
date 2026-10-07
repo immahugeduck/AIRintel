@@ -1,11 +1,30 @@
-import { useMemo, useState } from "react";
-import { CircleMarker, MapContainer, Polyline, TileLayer, Tooltip, ZoomControl } from "react-leaflet";
+import { useEffect, useMemo, useState } from "react";
+import { Marker, MapContainer, Polyline, TileLayer, Tooltip, ZoomControl, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import "./mapbox-settings.css";
-import type { LatLngExpression } from "leaflet";
-import { segmentTracksByProvider, type TrackPoint } from "../domain/aircraft";
+import { divIcon, latLng, type LatLngExpression } from "leaflet";
+import { segmentTracksByProvider, type TrackPoint, type AircraftObservation } from "../domain/aircraft";
 
-type Props = { id?: string; center: LatLngExpression; trackPoints?: TrackPoint[]; replayIndex?: number };
+type Props = { id?: string; center: LatLngExpression; observations?: AircraftObservation[]; selectedIcao24?: string | null; onSelectAircraft?: (icao24: string) => void; trackPoints?: TrackPoint[]; replayIndex?: number };
+
+const NO_OBSERVATIONS: AircraftObservation[] = [];
+
+function MapCenter({ center }: { center: LatLngExpression }) {
+  const map = useMap();
+  const { lat, lng } = latLng(center);
+  useEffect(() => { map.setView([lat, lng], map.getZoom()); }, [map, lat, lng]);
+  return null;
+}
+
+function aircraftIcon(trackDeg: number | null | undefined, selected: boolean) {
+  const known = trackDeg != null;
+  return divIcon({
+    className: "aircraft-direction-marker",
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    html: `<div style="width:28px;height:28px;display:grid;place-items:center;color:${selected ? "#f0b85c" : "#37d4b5"};filter:drop-shadow(0 1px 2px #000);transform:rotate(${known ? trackDeg : 0}deg)"><svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">${known ? '<path d="M13 2 L23 23 L13 18 L3 23 Z" fill="currentColor" stroke="white" stroke-width="1.5"/>' : '<circle cx="13" cy="13" r="8" fill="currentColor" stroke="white" stroke-width="2"/>'}</svg></div>`,
+  });
+}
 
 type StoredMapboxConfig = {
   accessToken: string;
@@ -42,7 +61,7 @@ const envConfig = (): StoredMapboxConfig | null => {
   return { accessToken, style };
 };
 
-export function LiveMap({ id, center, trackPoints = [], replayIndex = 0 }: Props) {
+export function LiveMap({ id, center, observations = NO_OBSERVATIONS, selectedIcao24, onSelectAircraft, trackPoints = [], replayIndex = 0 }: Props) {
   const initialConfig = useMemo(() => loadStoredConfig() ?? envConfig(), []);
   const [mapboxConfig, setMapboxConfig] = useState<StoredMapboxConfig | null>(initialConfig);
   const [setupOpen, setSetupOpen] = useState(initialConfig === null);
@@ -50,6 +69,29 @@ export function LiveMap({ id, center, trackPoints = [], replayIndex = 0 }: Props
   const [styleInput, setStyleInput] = useState(initialConfig?.style ?? DEFAULT_MAPBOX_STYLE);
   const [setupError, setSetupError] = useState<string | null>(null);
 
+  const [livePoints, setLivePoints] = useState<TrackPoint[]>([]);
+  useEffect(() => {
+    setLivePoints((previous) => {
+      const cutoff = Date.now() - 10 * 60_000;
+      const points = new Map<string, TrackPoint>();
+      for (const point of [...previous, ...observations]) {
+        if (Date.parse(point.observedAt) >= cutoff) {
+          points.set(`${point.provider}:${point.icao24}:${point.observedAt}`, point);
+        }
+      }
+      return [...points.values()].sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt)).slice(-5000);
+    });
+  }, [observations]);
+  const liveTracks = useMemo(() => {
+    const grouped = new Map<string, TrackPoint[]>();
+    for (const point of livePoints) {
+      const key = `${point.provider}:${point.icao24}`;
+      const group = grouped.get(key) ?? [];
+      group.push(point);
+      grouped.set(key, group);
+    }
+    return [...grouped.entries()].map(([key, points]) => ({ key, tracks: segmentTracksByProvider(points) }));
+  }, [livePoints]);
   const providerTracks = segmentTracksByProvider(trackPoints);
   const ordered = [...trackPoints].sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt));
   const replayPoint = ordered[Math.min(replayIndex, Math.max(0, ordered.length - 1))];
@@ -103,8 +145,10 @@ export function LiveMap({ id, center, trackPoints = [], replayIndex = 0 }: Props
           <button type="button" className="ghost-button" onClick={() => setSetupOpen(true)}>Map settings</button>
         </div>
       </div>
+      <p>Live trails show observations collected during the last 10 minutes on this page. Select an aircraft to load recorded history. Arrows show observed track direction; circles indicate unknown direction.</p>
       <div className="map-frame">
         <MapContainer center={center} zoom={9} zoomControl={false} className="map" aria-label="Aircraft map">
+          <MapCenter center={center} />
           <ZoomControl position="bottomright" />
           {tileUrl ? (
             <TileLayer
@@ -115,6 +159,20 @@ export function LiveMap({ id, center, trackPoints = [], replayIndex = 0 }: Props
               attribution='&copy; <a href="https://www.mapbox.com/about/maps/">Mapbox</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             />
           ) : null}
+          {liveTracks.map(({ key, tracks }) => tracks.map((track) => track.segments
+            .filter((segment) => segment.kind === "observed" && segment.points.length > 1)
+            .map((segment, index) => <Polyline key={`live:${key}:${index}`} positions={segment.points.map((point) => [point.latitude, point.longitude] as LatLngExpression)} pathOptions={{ color: "#37d4b5", weight: 2, opacity: 0.6 }} />)))}
+          {observations.map((point) => <Marker
+            key={`live:${point.provider}:${point.icao24}`}
+            position={[point.latitude, point.longitude]}
+            icon={aircraftIcon(point.trackDeg, point.icao24 === selectedIcao24)}
+            eventHandlers={{ click: () => onSelectAircraft?.(point.icao24) }}
+          ><Tooltip direction="top">
+            <strong>{point.registration ?? point.callsign ?? point.icao24}</strong><br />
+            {point.provider} | Observed {new Date(point.observedAt).toISOString()}<br />
+            Track direction: {point.trackDeg == null ? "Unknown" : `${point.trackDeg.toFixed(0)}°`}<br />
+            Ground speed: {point.groundSpeedKt == null ? "Unknown" : `${point.groundSpeedKt.toFixed(0)} kt`}
+          </Tooltip></Marker>)}
           {providerTracks.map((track, sourceIndex) => track.segments.map((segment, segmentIndex) => (
             <Polyline
               key={`${track.provider}:${segment.kind}:${segmentIndex}`}
@@ -122,7 +180,7 @@ export function LiveMap({ id, center, trackPoints = [], replayIndex = 0 }: Props
               pathOptions={{ color: sourceColors[sourceIndex % sourceColors.length], weight: segment.kind === "gap" ? 2 : 3, dashArray: segment.kind === "gap" ? "5 9" : undefined, opacity: segment.kind === "gap" ? 0.55 : 0.9 }}
             />
           )))}
-          {replayPoint && <CircleMarker center={[replayPoint.latitude, replayPoint.longitude]} radius={8} pathOptions={{ color: "#ffffff", fillColor: "#37d4b5", fillOpacity: 1, weight: 3 }}><Tooltip permanent direction="top">{replayPoint.registration ?? replayPoint.callsign ?? replayPoint.icao24}</Tooltip></CircleMarker>}
+          {replayPoint && <Marker position={[replayPoint.latitude, replayPoint.longitude]} icon={aircraftIcon(replayPoint.trackDeg, true)}><Tooltip permanent direction="top">{replayPoint.registration ?? replayPoint.callsign ?? replayPoint.icao24}</Tooltip></Marker>}
         </MapContainer>
         {!configured && (
           <div className="map-blocker" role="status">
