@@ -703,3 +703,65 @@ footer {
 .auth-actions { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
 .auth-actions .auth-link { border: 0; background: none; color: var(--accent); padding: 0; text-decoration: underline; }
 .auth-error { margin: 0; color: var(--warning); }
+
+/* Map-first flight workspace */
+body { background: #09121d; }
+main { width: 100%; padding: 1rem clamp(.75rem, 2vw, 2rem) 2rem; }
+.topbar { padding: .65rem clamp(.75rem, 2vw, 2rem); background: #0c1825; }
+.brand-mark { border-radius: 6px; width: 34px; height: 34px; }
+.section-switcher { border-radius: 6px; }
+.airspace-toolbar { margin-bottom: .75rem; }
+.airspace-toolbar .query-card { display: flex; align-items: center; gap: 2rem; padding: .65rem 1rem; border-radius: 8px; box-shadow: none; }
+.airspace-toolbar .card-heading { flex: 0 0 auto; }
+.airspace-toolbar .card-heading h2 { font-size: 1rem; }
+.airspace-toolbar .query-bar { margin: 0; max-width: 620px; flex: 1; gap: .65rem; }
+.airspace-toolbar input { min-height: 34px; border-radius: 5px; padding: 0 .65rem; }
+.workspace-grid { display: block; }
+.map-panel { min-height: 0; border-radius: 8px; box-shadow: none; }
+.map-panel .panel-heading { min-height: 52px; padding: .6rem 1rem; }
+.map-frame { height: clamp(380px, 64vh, 850px); min-height: 0; }
+.map-legend { display: flex; flex-wrap: wrap; gap: 1.25rem; margin: 0; padding: .5rem 1rem; font-size: .72rem; color: var(--text-muted); }
+.map-legend .selected-key { color: var(--accent-warm); }
+.radius-panel, .selected-flight { margin-top: .75rem; border-radius: 8px; box-shadow: none; }
+.radius-panel .panel-heading, .selected-flight .panel-heading { min-height: 56px; padding: .75rem 1rem; }
+.radius-panel .count { display: inline-block; margin-left: .5rem; padding: .15rem .5rem; border-radius: 4px; background: var(--accent-soft); font-size: 1rem; }
+.table-window, .table-note { color: var(--text-muted); font-size: .75rem; }
+.table-note { margin: 0; padding: .65rem 1rem; text-align: left; line-height: 1.5; }
+.aircraft-table-scroll { overflow: auto; max-height: 400px; }
+.aircraft-table { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: .8rem; font-variant-numeric: tabular-nums; }
+.aircraft-table thead { position: sticky; top: 0; z-index: 1; background: #122334; }
+.aircraft-table th { text-align: left; color: #9db1c4; font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; padding: .6rem .8rem; }
+.aircraft-table td { padding: .45rem .8rem; border-top: 1px solid var(--panel-border); }
+.aircraft-table tbody tr { cursor: pointer; }
+.aircraft-table tbody tr:nth-child(even) { background: rgba(255,255,255,.025); }
+.aircraft-table tbody tr:hover, .aircraft-table tbody tr:focus-within { background: rgba(55,212,181,.08); }
+.aircraft-table tbody tr.selected { background: rgba(240,184,92,.12); box-shadow: inset 3px 0 var(--accent-warm); }
+.aircraft-table button { padding: .2rem 0; border: 0; background: none; color: var(--accent); font-weight: 700; }
+.aircraft-table td small { display: block; color: var(--text-muted); font-size: .65rem; }
+.flight-facts { display: grid; grid-template-columns: repeat(4,1fr); gap: 1rem; margin: 0; padding: 1rem; }
+.flight-facts dt { font-size: .7rem; color: var(--text-muted); }
+.flight-facts dd { margin: .3rem 0 0; font-variant-numeric: tabular-nums; }
+.replay, .section-panel { border-radius: 8px; box-shadow: none; }
+.search-end { padding: 1rem; margin-top: 1rem; }
+.search-end .history-search { max-width: 460px; }
+.search-end .history-search input, .search-end .history-search button { min-height: 34px; border-radius: 5px; }
+.search-end .history-search button { min-width: 110px; box-shadow: none; font-size: .8rem; }
+.search-end .search-results { margin: .75rem 0 0; }
+.evidence-end { margin-top: .75rem; color: var(--text-muted); font-size: .8rem; }
+.evidence-end summary { cursor: pointer; padding: .5rem; }
+footer { padding: .75rem 2rem; }
+section[id] { scroll-margin-top: 90px; }
+@media (max-width: 720px) {
+  .airspace-toolbar .query-card { display: block; }
+  .airspace-toolbar .query-bar { grid-template-columns: repeat(3,minmax(0,1fr)); margin-top: .65rem; }
+  .airspace-toolbar .query-bar input { min-width: 0; padding: .3rem; font-size: .8rem; }
+  .map-frame { height: 55vh; min-height: 340px; }
+  .map-heading-actions { flex-wrap: wrap; gap: .3rem; }
+  .map-legend { gap: .5rem 1rem; }
+  .radius-panel .panel-heading { flex-wrap: wrap; gap: .3rem; }
+  .flight-facts { grid-template-columns: repeat(2,1fr); }
+  .section-switcher { width: auto; margin-left: auto; }
+}
+
+.map-heading-actions .ghost-button { min-height: 30px; border-radius: 5px; padding: 0 .65rem; font-size: .75rem; }
+.map-heading-actions .ghost-button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
