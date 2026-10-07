@@ -26,6 +26,14 @@ The map engine remains **Leaflet**. The basemap provider is **Mapbox Static Tile
 - Production/deployed configuration belongs in the deployment environment, not committed source files.
 - Static Tiles are requested at 512px with Leaflet `tileSize: 512` and `zoomOffset: -1`.
 
+## Basemap configuration
+
+- `VITE_MAPBOX_ACCESS_TOKEN`: public Mapbox access token beginning with `pk.`.
+- `VITE_MAPBOX_STYLE`: published Mapbox style in `username/style-id` form; defaults to `mapbox/streets-v12` in examples.
+- The in-app Map settings dialog can store the same public configuration in browser local storage for local development.
+- Production/deployed configuration belongs in the deployment environment, not committed source files.
+- Static Tiles are requested at 512px with Leaflet `tileSize: 512` and `zoomOffset: -1`.
+
 ## Provider gate
 
 Before a provider adapter is implemented, record its official documentation URL, authentication scheme, units/null semantics, quotas, storage and redistribution terms, attribution, allowed cache duration, historical availability, and error behavior in `docs/provider-onboarding.md`.
