@@ -14,7 +14,7 @@ Read `docs/AIRROUTE_PROJECT_BRIEF.md`, `docs/architecture.md`, and `docs/provide
 - Validate external data and user input with Zod. TypeScript stays in strict mode.
 - Use UTC internally and explicit aviation units in names.
 - Do not connect solid track segments across reception gaps.
-- Enable RLS on every table in an exposed Supabase schema; browser roles receive least privilege.
+- Enable RLS on every table and keep browser-facing database roles (Neon Data API `authenticated`/`anonymous`) at zero privileges; all data access goes through the server API after Neon Auth JWT verification and an `access_grants` check.
 - Never commit credentials or place server secrets in `VITE_*` variables.
 
 ## Completion checks

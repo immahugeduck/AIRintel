@@ -1,4 +1,5 @@
 import { aircraftResponseSchema, radiusQuerySchema, type RadiusQuery } from "../domain/aircraft";
+import { resolveApiUrl } from "../lib/api-url";
 import { ProviderNotConfiguredError } from "../providers/contracts";
 
 export async function fetchAircraft(query: RadiusQuery, signal?: AbortSignal) {
@@ -6,7 +7,7 @@ export async function fetchAircraft(query: RadiusQuery, signal?: AbortSignal) {
   if (!endpoint) throw new ProviderNotConfiguredError();
 
   const safe = radiusQuerySchema.parse(query);
-  const url = new URL(endpoint);
+  const url = resolveApiUrl(endpoint);
   url.searchParams.set("lat", String(safe.latitude));
   url.searchParams.set("lon", String(safe.longitude));
   url.searchParams.set("radiusNm", String(safe.radiusNm));
