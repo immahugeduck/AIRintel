@@ -79,7 +79,7 @@ describe("summarizeTrackPoints", () => {
 });
 
 describe("summarizeRoute", () => {
-  it("detects loitering segments and totals route distance", () => {
+  it("excludes reception gaps from distance and loitering", () => {
     const points: TrackPoint[] = [
       {
         provider: "adsb",
@@ -134,8 +134,14 @@ describe("summarizeRoute", () => {
     const summary = summarizeRoute(points, 0.3, 5);
 
     expect(summary.pointCount).toBe(3);
-    expect(summary.totalDistanceNm).toBeGreaterThan(0);
-    expect(summary.loiteringDetected).toBe(true);
-    expect(summary.loiteringMinutes).toBeGreaterThanOrEqual(10);
+    expect(summary.totalDistanceNm).toBe(0);
+    expect(summary.loiteringDetected).toBe(false);
+    expect(summary.loiteringMinutes).toBe(0);
+    // Reuse the existing synthetic mathematical test vectors with continuous reception.
+    const continuous = points.map((point, index) => ({ ...point, observedAt: new Date(Date.parse(points[0]!.observedAt) + index * 60_000).toISOString() }));
+    const observed = summarizeRoute(continuous, 0.3, 1);
+    expect(observed.totalDistanceNm).toBeGreaterThan(0);
+    expect(observed.loiteringDetected).toBe(true);
+    expect(observed.loiteringMinutes).toBe(2);
   });
 });

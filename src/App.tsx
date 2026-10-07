@@ -5,35 +5,31 @@ import { fetchNearbyAircraft, fetchRecentTrack, fetchRouteSummary, fetchTrackIns
 import { fetchAircraftProfile } from "./api/profile";
 import { AircraftProfilePanel } from "./components/AircraftProfilePanel";
 import { AuthPanel } from "./components/AuthPanel";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LiveMap } from "./components/LiveMap";
 import { EvidenceUploadPanel } from "./components/EvidenceUploadPanel";
 import { ReplayPanel } from "./components/ReplayPanel";
+import { distanceNm } from "./domain/geometry";
 import type { AircraftObservation } from "./domain/aircraft";
 import { AuthenticationRequiredError, ProviderNotConfiguredError } from "./providers/contracts";
 
 const envNumber = (value: string | undefined, fallback: number) => {
-  const parsed = Number(value);
+  const parsed = value?.trim() ? Number(value) : NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
 
-function distanceNm(lat: number, lon: number, otherLat: number, otherLon: number) {
-  const radians = (degrees: number) => degrees * Math.PI / 180;
-  const a = Math.sin(radians(otherLat - lat) / 2) ** 2 + Math.cos(radians(lat)) * Math.cos(radians(otherLat)) * Math.sin(radians(otherLon - lon) / 2) ** 2;
-  return 3440.065 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
-}
-
 export default function App() {
-  const [latitude, setLatitude] = useState(envNumber(import.meta.env.VITE_DEFAULT_CENTER_LAT, 39.7684));
-  const [longitude, setLongitude] = useState(envNumber(import.meta.env.VITE_DEFAULT_CENTER_LON, -86.1581));
-  const [radiusNm, setRadiusNm] = useState(envNumber(import.meta.env.VITE_DEFAULT_RADIUS_NM, 20));
+  const [latitude, setLatitude] = useState(Math.max(-90, Math.min(90, envNumber(import.meta.env.VITE_DEFAULT_CENTER_LAT, 39.7684))));
+  const [longitude, setLongitude] = useState(Math.max(-180, Math.min(180, envNumber(import.meta.env.VITE_DEFAULT_CENTER_LON, -86.1581))));
+  const [radiusNm, setRadiusNm] = useState(Math.max(1, Math.min(100, envNumber(import.meta.env.VITE_DEFAULT_RADIUS_NM, 20))));
   const [searchInput, setSearchInput] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
   const [selectedIcao24, setSelectedIcao24] = useState<string | null>(null);
   const [replayIndex, setReplayIndex] = useState(0);
   const [activeSection, setActiveSection] = useState("live-feed");
   const query = useMemo(() => ({ latitude, longitude, radiusNm }), [latitude, longitude, radiusNm]);
-  const pollMs = envNumber(import.meta.env.VITE_POLL_INTERVAL_SECONDS, 20) * 1000;
+  const pollMs = Math.max(10, envNumber(import.meta.env.VITE_POLL_INTERVAL_SECONDS, 20)) * 1000;
   const aircraft = useQuery({
     queryKey: ["aircraft", query],
     queryFn: ({ signal }) => fetchAircraft(query, signal),
@@ -149,15 +145,15 @@ export default function App() {
               <button type="button" className="ghost-button" onClick={() => void aircraft.refetch()} disabled={aircraft.isFetching}>Refresh</button>
             </div>
             <div className="query-bar">
-              <label>Latitude<input type="number" value={latitude} min={-90} max={90} step="0.0001" onChange={(e) => setLatitude(e.currentTarget.valueAsNumber)} /></label>
-              <label>Longitude<input type="number" value={longitude} min={-180} max={180} step="0.0001" onChange={(e) => setLongitude(e.currentTarget.valueAsNumber)} /></label>
-              <label>Radius (NM)<input type="number" value={radiusNm} min={1} max={100} onChange={(e) => setRadiusNm(e.currentTarget.valueAsNumber)} /></label>
+              <label>Latitude<input type="number" value={latitude} min={-90} max={90} step="0.0001" onChange={(e) => { const value = e.currentTarget.valueAsNumber; if (Number.isFinite(value) && value >= -90 && value <= 90) setLatitude(value); }} /></label>
+              <label>Longitude<input type="number" value={longitude} min={-180} max={180} step="0.0001" onChange={(e) => { const value = e.currentTarget.valueAsNumber; if (Number.isFinite(value) && value >= -180 && value <= 180) setLongitude(value); }} /></label>
+              <label>Radius (NM)<input type="number" value={radiusNm} min={1} max={100} onChange={(e) => { const value = e.currentTarget.valueAsNumber; if (Number.isFinite(value) && value >= 1 && value <= 100) setRadiusNm(value); }} /></label>
             </div>
           </div>
 
         </section>
         <div className="workspace-grid">
-          <LiveMap id="live-feed" center={[latitude, longitude]} observations={aircraft.data?.observations ?? []} selectedIcao24={selectedIcao24} onSelectAircraft={selectAircraft} radiusNm={radiusNm} key={areaKey} trackPoints={track.data?.points ?? []} replayIndex={replayIndex} />
+          <ErrorBoundary><LiveMap id="live-feed" center={[latitude, longitude]} observations={aircraft.data?.observations ?? []} selectedIcao24={selectedIcao24} onSelectAircraft={selectAircraft} radiusNm={radiusNm} trackPoints={track.data?.points ?? []} replayIndex={replayIndex} /></ErrorBoundary>
 
         </div>
 
@@ -206,7 +202,7 @@ export default function App() {
             </section>
           ) : null}
         </section>
-        <section className="search-end section-panel" id="history-search-panel">          <form className="history-search" onSubmit={(event) => { event.preventDefault(); setSubmittedSearch(searchInput.trim()); setSelectedIcao24(null); goToSection("history-results"); }}>
+        <section className="search-end section-panel" id="history-search-panel">          <form className="history-search" onSubmit={(event) => { event.preventDefault(); setSubmittedSearch(searchInput.trim()); setSelectedIcao24(null); goToSection("history-search-panel"); }}>
             <label htmlFor="history-search">Search recorded aircraft</label>
             <div><input id="history-search" value={searchInput} minLength={2} maxLength={24} pattern="[A-Za-z0-9\-]+" placeholder="Registration or ICAO24" onChange={(event) => setSearchInput(event.currentTarget.value)} /><button type="submit">Search history</button></div>
           </form>        {submittedSearch && (
