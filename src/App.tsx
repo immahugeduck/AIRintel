@@ -143,7 +143,7 @@ export default function App() {
           </section>
         )}
         <div className="workspace-grid">
-          <LiveMap id="live-feed" center={[latitude, longitude]} trackPoints={track.data?.points ?? []} replayIndex={replayIndex} />
+          <LiveMap id="live-feed" center={[latitude, longitude]} observations={aircraft.data?.observations ?? []} selectedIcao24={selectedIcao24} onSelectAircraft={(icao24) => { setSelectedIcao24(icao24); setReplayIndex(0); }} trackPoints={track.data?.points ?? []} replayIndex={replayIndex} />
           <aside className="intel-panel section-panel" aria-labelledby="intel-heading">
             <div className="panel-heading"><div><p className="eyebrow">Data health</p><h2 id="intel-heading">Aircraft observations</h2></div><span className="count">{aircraft.data?.observations.length ?? 0}</span></div>
             {aircraft.error instanceof ProviderNotConfiguredError ? (
@@ -153,7 +153,7 @@ export default function App() {
             ) : aircraft.data?.observations.length === 0 ? (
               <div className="empty-state"><h3>No observations received</h3><p>The configured source returned no aircraft for this area and refresh window. This does not establish that the airspace is empty.</p></div>
             ) : (
-              <ul className="aircraft-list">{aircraft.data?.observations.map((item) => <li key={`${item.provider}:${item.icao24}:${item.observedAt}`}><strong>{item.registration ?? item.callsign ?? item.icao24}</strong><span>{item.altitudeFt == null ? "Altitude unknown" : `${Math.round(item.altitudeFt).toLocaleString()} ft ${item.altitudeSource}`}</span><small>{item.provider} | observed {new Date(item.observedAt).toLocaleTimeString()}</small></li>)}</ul>
+              <ul className="aircraft-list">{aircraft.data?.observations.map((item) => <li key={`${item.provider}:${item.icao24}:${item.observedAt}`}><button type="button" aria-pressed={selectedIcao24 === item.icao24} onClick={() => { setSelectedIcao24(item.icao24); setReplayIndex(0); }}><strong>{item.registration ?? item.callsign ?? item.icao24}</strong></button><span>{item.altitudeFt == null ? "Altitude unknown" : `${Math.round(item.altitudeFt).toLocaleString()} ft ${item.altitudeSource}`}</span><small>{item.provider} | observed {new Date(item.observedAt).toLocaleTimeString()}</small></li>)}</ul>
             )}
           </aside>
         </div>
