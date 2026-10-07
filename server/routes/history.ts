@@ -148,11 +148,14 @@ export function historyRoutes(db: Queryable) {
       );
       const matches = rows
         .map((row) => {
-          const distanceNm = Math.hypot(row.latitude - lat, row.longitude - lon) * 69;
+          const toRadians = (degrees: number) => degrees * Math.PI / 180;
+          const a = Math.sin(toRadians(row.latitude - lat) / 2) ** 2 + Math.cos(toRadians(lat)) * Math.cos(toRadians(row.latitude)) * Math.sin(toRadians(row.longitude - lon) / 2) ** 2;
+          const distanceNm = 3440.065 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
           if (distanceNm > radiusNm) return null;
           return { icao24: row.icao24, registration: row.registration, callsign: row.callsign ?? null, latitude: row.latitude, longitude: row.longitude, observedAt: iso(row.observed_at), distanceNm, altitudeFt: row.altitude_ft ?? null };
         })
         .filter((value): value is NonNullable<typeof value> => value != null)
+        .filter((value, index, values) => values.findIndex((other) => other.icao24 === value.icao24) === index)
         .slice(0, 50);
       return c.json({ query: { latitude: lat, longitude: lon, radiusNm }, receivedAt: new Date().toISOString(), matches });
     }
