@@ -36,6 +36,8 @@ Set for **Preview** and **Production** (add **Development** if you use `vercel d
 
 Every `VITE_*` value is baked in at build time: change one → redeploy.
 
+**Vercel Neon integration prefix.** If Neon was connected through the Vercel Marketplace with the `SERVERSIDE_NEON` prefix, it writes `SERVERSIDE_NEON_NEON_AUTH_BASE_URL` (and `SERVERSIDE_NEON_NEON_AUTH_JWKS_URL` if present) and `SERVERSIDE_NEON_VITE_NEON_AUTH_URL`. The API and the SPA fall back to those names when `NEON_AUTH_BASE_URL` / `VITE_NEON_AUTH_URL` are unset; the plain names always win when both exist. Other prefixes (e.g. `NEON_STORE_`) are not read. `SERVERSIDE_NEON_VITE_` is listed in `envPrefix` in `vite.config.ts`, so it is baked into the bundle like any `VITE_*` value.
+
 ## 2. Neon project
 
 - [ ] Create (or claim) a non-expiring Neon project (Postgres 17, PostGIS available). Recommended: Vercel dashboard → Storage → Create → Neon (Marketplace), which creates the project and injects `DATABASE_URL`.

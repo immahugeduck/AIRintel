@@ -8,6 +8,8 @@ interface ImportMetaEnv {
   readonly VITE_HISTORY_API_URL?: string;
   readonly VITE_PROFILE_API_URL?: string;
   readonly VITE_NEON_AUTH_URL?: string;
+  /** Set by the Vercel Neon integration; used when VITE_NEON_AUTH_URL is unset. Exposed via envPrefix in vite.config.ts. */
+  readonly SERVERSIDE_NEON_VITE_NEON_AUTH_URL?: string;
   readonly VITE_DEFAULT_CENTER_LAT?: string;
   readonly VITE_DEFAULT_CENTER_LON?: string;
   readonly VITE_DEFAULT_RADIUS_NM?: string;
