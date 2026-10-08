@@ -2,17 +2,19 @@ import { useEffect, useMemo, useState } from "react";
 import { Circle, Marker, MapContainer, Polyline, TileLayer, Tooltip, ZoomControl, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import "./mapbox-settings.css";
-import { circle, divIcon, latLng, type LatLngExpression } from "leaflet";
+import { divIcon, latLng, type LatLngExpression } from "leaflet";
+import { watchAreaBounds } from "../domain/geometry";
 import { segmentTracksByProvider, type TrackPoint, type AircraftObservation } from "../domain/aircraft";
 
 type Props = { id?: string; center: LatLngExpression; radiusNm?: number; observations?: AircraftObservation[]; selectedIcao24?: string | null; onSelectAircraft?: (icao24: string) => void; trackPoints?: TrackPoint[]; replayIndex?: number };
 
 const NO_OBSERVATIONS: AircraftObservation[] = [];
+const NO_TRACK_POINTS: TrackPoint[] = [];
 
 function MapCenter({ center, radiusNm }: { center: LatLngExpression; radiusNm: number }) {
   const map = useMap();
   const { lat, lng } = latLng(center);
-  useEffect(() => { map.fitBounds(circle([lat, lng], { radius: radiusNm * 1852 }).getBounds(), { padding: [24, 24] }); }, [map, lat, lng, radiusNm]);
+  useEffect(() => { map.fitBounds(watchAreaBounds(lat, lng, radiusNm), { padding: [24, 24] }); }, [map, lat, lng, radiusNm]);
   return null;
 }
 
@@ -47,8 +49,9 @@ const loadStoredConfig = (): StoredMapboxConfig | null => {
     const raw = window.localStorage.getItem(MAPBOX_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredMapboxConfig>;
-    if (typeof parsed.accessToken !== "string" || typeof parsed.style !== "string") return null;
-    return { accessToken: parsed.accessToken, style: parsed.style };
+    if (typeof parsed.accessToken !== "string" || !parsed.accessToken.trim().startsWith("pk.") || typeof parsed.style !== "string") return null;
+    const style = normalizeStyle(parsed.style);
+    return style ? { accessToken: parsed.accessToken.trim(), style } : null;
   } catch {
     return null;
   }
@@ -56,12 +59,12 @@ const loadStoredConfig = (): StoredMapboxConfig | null => {
 
 const envConfig = (): StoredMapboxConfig | null => {
   const accessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN?.trim();
-  if (!accessToken) return null;
+  if (!accessToken?.startsWith("pk.")) return null;
   const style = normalizeStyle(import.meta.env.VITE_MAPBOX_STYLE ?? DEFAULT_MAPBOX_STYLE) ?? DEFAULT_MAPBOX_STYLE;
   return { accessToken, style };
 };
 
-export function LiveMap({ id, center, radiusNm = 20, observations = NO_OBSERVATIONS, selectedIcao24, onSelectAircraft, trackPoints = [], replayIndex = 0 }: Props) {
+export function LiveMap({ id, center, radiusNm = 20, observations = NO_OBSERVATIONS, selectedIcao24, onSelectAircraft, trackPoints = NO_TRACK_POINTS, replayIndex = 0 }: Props) {
   const initialConfig = useMemo(() => loadStoredConfig() ?? envConfig(), []);
   const [mapboxConfig, setMapboxConfig] = useState<StoredMapboxConfig | null>(initialConfig);
   const [setupOpen, setSetupOpen] = useState(initialConfig === null);
@@ -72,6 +75,8 @@ export function LiveMap({ id, center, radiusNm = 20, observations = NO_OBSERVATI
   const [setupError, setSetupError] = useState<string | null>(null);
 
   const [livePoints, setLivePoints] = useState<TrackPoint[]>([]);
+  const { lat: centerLat, lng: centerLng } = latLng(center);
+  useEffect(() => { setLivePoints([]); }, [centerLat, centerLng, radiusNm]);
   useEffect(() => {
     setLivePoints((previous) => {
       const cutoff = Date.now() - 10 * 60_000;
@@ -116,7 +121,7 @@ export function LiveMap({ id, center, radiusNm = 20, observations = NO_OBSERVATI
     }
 
     const next = { accessToken: token, style };
-    window.localStorage.setItem(MAPBOX_STORAGE_KEY, JSON.stringify(next));
+    try { window.localStorage.setItem(MAPBOX_STORAGE_KEY, JSON.stringify(next)); } catch { /* Private browsing can block storage; still use this session configuration. */ }
     setMapboxConfig(next);
     setStyleInput(style);
     setSetupError(null);
@@ -124,7 +129,7 @@ export function LiveMap({ id, center, radiusNm = 20, observations = NO_OBSERVATI
   };
 
   const clearLocalMapboxConfig = () => {
-    window.localStorage.removeItem(MAPBOX_STORAGE_KEY);
+    try { window.localStorage.removeItem(MAPBOX_STORAGE_KEY); } catch { /* Storage is optional. */ }
     const fallback = envConfig();
     setMapboxConfig(fallback);
     setTokenInput(fallback?.accessToken ?? "");
@@ -205,7 +210,7 @@ export function LiveMap({ id, center, radiusNm = 20, observations = NO_OBSERVATI
                 <p className="eyebrow">Basemap configuration</p>
                 <h3 id="mapbox-dialog-title">Connect Mapbox</h3>
               </div>
-              {configured && <button type="button" className="dialog-close" aria-label="Close Mapbox settings" onClick={() => setSetupOpen(false)}>×</button>}
+              <button type="button" className="dialog-close" aria-label="Close Mapbox settings" onClick={() => setSetupOpen(false)}>×</button>
             </div>
             <p className="mapbox-dialog-copy">Enter a public Mapbox access token and a published style. This browser setup is stored only on this device. For deployment, configure the same values as environment variables.</p>
             <label>

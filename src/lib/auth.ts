@@ -9,7 +9,7 @@ let client: NeonAuthClient | null | undefined;
 /** Neon Auth (Managed Better Auth) browser client, or null when VITE_NEON_AUTH_URL is not configured. */
 export function getAuthClient(): NeonAuthClient | null {
   if (client !== undefined) return client;
-  const url = import.meta.env.VITE_NEON_AUTH_URL;
+  const url = import.meta.env.VITE_NEON_AUTH_URL?.trim();
   client = url ? createClient(url) : null;
   return client;
 }

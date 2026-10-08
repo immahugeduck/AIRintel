@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { distanceNm } from "./geometry";
 
 const nullableTrimmed = z.string().trim().min(1).nullable().optional();
 
@@ -261,16 +262,6 @@ export function summarizeTrackPoints(points: TrackPoint[]): TrackSummary {
   };
 }
 
-function haversineDistanceNm(latitude1: number, longitude1: number, latitude2: number, longitude2: number): number {
-  const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
-  const earthRadiusNm = 3440.065; // nautical miles
-  const deltaLatitude = toRadians(latitude2 - latitude1);
-  const deltaLongitude = toRadians(longitude2 - longitude1);
-  const a = Math.sin(deltaLatitude / 2) ** 2 + Math.cos(toRadians(latitude1)) * Math.cos(toRadians(latitude2)) * Math.sin(deltaLongitude / 2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return earthRadiusNm * c;
-}
-
 export function summarizeRoute(points: TrackPoint[], loiteringRadiusNm = 0.25, loiteringMinMinutes = 5): RouteSummary {
   if (points.length === 0) {
     return { pointCount: 0, durationMinutes: 0, totalDistanceNm: 0, averageGroundSpeedKt: null, loiteringDetected: false, loiteringMinutes: 0 };
@@ -288,10 +279,11 @@ export function summarizeRoute(points: TrackPoint[], loiteringRadiusNm = 0.25, l
   for (let index = 1; index < ordered.length; index += 1) {
     const previous = ordered[index - 1]!;
     const current = ordered[index]!;
-    const distanceNm = haversineDistanceNm(previous.latitude, previous.longitude, current.latitude, current.longitude);
-    totalDistanceNm += distanceNm;
     const gapMinutes = Math.max(0, (Date.parse(current.observedAt) - Date.parse(previous.observedAt)) / 60_000);
-    if (distanceNm <= loiteringRadiusNm) {
+    if (previous.provider !== current.provider || gapMinutes > 2) { currentLoiteringMinutes = 0; continue; }
+    const segmentDistanceNm = distanceNm(previous.latitude, previous.longitude, current.latitude, current.longitude);
+    totalDistanceNm += segmentDistanceNm;
+    if (segmentDistanceNm <= loiteringRadiusNm) {
       currentLoiteringMinutes += gapMinutes;
       if (currentLoiteringMinutes >= loiteringMinMinutes) loiteringMinutes = Math.max(loiteringMinutes, currentLoiteringMinutes);
     } else {

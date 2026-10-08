@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { distanceNm } from "../../src/domain/geometry.js";
 import { iso, type Queryable } from "../db.js";
 import type { AppVariables } from "../http.js";
 
@@ -104,9 +105,10 @@ export function historyRoutes(db: Queryable) {
         const previous = ordered[index - 1]!;
         const current = ordered[index]!;
         const gapMinutes = Math.max(0, (current.observed_at.getTime() - previous.observed_at.getTime()) / 60_000);
-        const distanceNm = Math.hypot(current.latitude - previous.latitude, current.longitude - previous.longitude) * 69;
-        totalDistanceNm += distanceNm;
-        if (distanceNm <= loiteringRadiusNm) {
+        if (previous.source_id !== current.source_id || gapMinutes > 2) { currentLoiteringMinutes = 0; continue; }
+        const segmentDistanceNm = distanceNm(previous.latitude, previous.longitude, current.latitude, current.longitude);
+        totalDistanceNm += segmentDistanceNm;
+        if (segmentDistanceNm <= loiteringRadiusNm) {
           currentLoiteringMinutes += gapMinutes;
           if (currentLoiteringMinutes >= loiteringMinMinutes) loiteringMinutes = Math.max(loiteringMinutes, currentLoiteringMinutes);
         } else {
@@ -137,7 +139,7 @@ export function historyRoutes(db: Queryable) {
       const lat = Number(rawLat);
       const lon = Number(rawLon);
       const radiusNm = Number(rawRadius ?? 20);
-      if (rawLat == null || rawLon == null || !Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(radiusNm)) return c.json({ error: "invalid_spatial_query" }, 400);
+      if (rawLat == null || rawLon == null || !Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(radiusNm) || lat < -90 || lat > 90 || lon < -180 || lon > 180 || radiusNm <= 0 || radiusNm > 100 || !Number.isFinite(hours)) return c.json({ error: "invalid_spatial_query" }, 400);
       const windowEnd = new Date();
       const windowStart = new Date(windowEnd.getTime() - hours * 3_600_000);
       const { rows } = await db.query<AircraftRow & { callsign: string | null; latitude: number; longitude: number; altitude_ft: number | null; observed_at: Date }>(
@@ -148,11 +150,9 @@ export function historyRoutes(db: Queryable) {
       );
       const matches = rows
         .map((row) => {
-          const toRadians = (degrees: number) => degrees * Math.PI / 180;
-          const a = Math.sin(toRadians(row.latitude - lat) / 2) ** 2 + Math.cos(toRadians(lat)) * Math.cos(toRadians(row.latitude)) * Math.sin(toRadians(row.longitude - lon) / 2) ** 2;
-          const distanceNm = 3440.065 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(Math.max(0, 1 - a)));
-          if (distanceNm > radiusNm) return null;
-          return { icao24: row.icao24, registration: row.registration, callsign: row.callsign ?? null, latitude: row.latitude, longitude: row.longitude, observedAt: iso(row.observed_at), distanceNm, altitudeFt: row.altitude_ft ?? null };
+          const observedDistanceNm = distanceNm(lat, lon, row.latitude, row.longitude);
+          if (observedDistanceNm > radiusNm) return null;
+          return { icao24: row.icao24, registration: row.registration, callsign: row.callsign ?? null, latitude: row.latitude, longitude: row.longitude, observedAt: iso(row.observed_at), distanceNm: observedDistanceNm, altitudeFt: row.altitude_ft ?? null };
         })
         .filter((value): value is NonNullable<typeof value> => value != null)
         .filter((value, index, values) => values.findIndex((other) => other.icao24 === value.icao24) === index)

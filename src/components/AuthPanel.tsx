@@ -24,6 +24,10 @@ export function AuthPanel() {
       if (!active) return;
       setEmail(result.data?.user?.email ?? null);
       setChecking(false);
+    }).catch(() => {
+      if (!active) return;
+      setError("Unable to check your session. Try signing in again.");
+      setChecking(false);
     });
     return () => { active = false; };
   }, [auth]);
@@ -37,31 +41,45 @@ export function AuthPanel() {
     event.preventDefault();
     setBusy(true);
     setError(null);
-    const result = mode === "sign-up"
-      ? await auth.signUp.email({ name: formEmail.split("@")[0] || "AIRIntel user", email: formEmail, password })
-      : await auth.signIn.email({ email: formEmail, password });
-    setBusy(false);
-    if (result.error) {
-      setError(result.error.message ?? "Authentication failed");
-      return;
+    try {
+      const result = mode === "sign-up"
+        ? await auth.signUp.email({ name: formEmail.split("@")[0] || "AIRIntel user", email: formEmail, password })
+        : await auth.signIn.email({ email: formEmail, password });
+      if (result.error) {
+        setError(result.error.message ?? "Authentication failed");
+        return;
+      }
+      clearAccessToken();
+      const session = await auth.getSession();
+      setEmail(session.data?.user?.email ?? null);
+      setPassword("");
+      setOpen(false);
+      await refreshData();
+    } catch {
+      setError("Sign-in could not complete. Check your connection and try again.");
+    } finally {
+      setBusy(false);
     }
-    clearAccessToken();
-    const session = await auth.getSession();
-    setEmail(session.data?.user?.email ?? formEmail);
-    setPassword("");
-    setOpen(false);
-    await refreshData();
   };
 
   const signOut = async () => {
-    await auth.signOut();
-    clearAccessToken();
-    setEmail(null);
-    await refreshData();
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await auth.signOut();
+      if (result.error) { setError(result.error.message ?? "Sign-out failed"); return; }
+      clearAccessToken();
+      setEmail(null);
+      queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "aircraft" });
+    } catch {
+      setError("Sign-out could not complete. Please try again.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (email) {
-    return <div className="auth-panel"><span className="auth-note">{email}</span><button type="button" onClick={() => void signOut()}>Sign out</button></div>;
+    return <div className="auth-panel"><span className="auth-note">{email}</span>{error && <span role="alert" className="auth-error">{error}</span>}<button type="button" disabled={busy} onClick={() => void signOut()}>Sign out</button></div>;
   }
 
   return (

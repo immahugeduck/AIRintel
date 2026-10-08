@@ -12,7 +12,8 @@ function blobAccess(): BlobAccess {
 }
 
 function safeFilename(value: string) {
-  const decoded = decodeURIComponent(value).trim();
+  // Hono query parameters are already decoded. Decoding twice rejects filenames containing a literal percent sign.
+  const decoded = value.trim();
   const basename = decoded.split(/[\\/]/).pop() ?? "";
   const safe = basename.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return safe.slice(0, 120);
