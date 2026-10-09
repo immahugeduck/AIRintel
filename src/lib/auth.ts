@@ -6,10 +6,22 @@ export type NeonAuthClient = ReturnType<typeof createClient>;
 
 let client: NeonAuthClient | null | undefined;
 
-/** Neon Auth (Managed Better Auth) browser client, or null when VITE_NEON_AUTH_URL is not configured. */
+/**
+ * Picks the Neon Auth URL: VITE_NEON_AUTH_URL wins, otherwise SERVERSIDE_NEON_VITE_NEON_AUTH_URL (the name the
+ * Vercel Neon integration uses). Blank values count as unset.
+ */
+export function pickNeonAuthUrl(plain: string | undefined, prefixed: string | undefined): string | undefined {
+  return plain?.trim() || prefixed?.trim() || undefined;
+}
+
+/**
+ * Neon Auth (Managed Better Auth) browser client, or null when neither VITE_NEON_AUTH_URL nor
+ * SERVERSIDE_NEON_VITE_NEON_AUTH_URL is configured. Both are referenced statically so Vite inlines them at build
+ * time (SERVERSIDE_NEON_VITE_ is exposed through `envPrefix` in vite.config.ts).
+ */
 export function getAuthClient(): NeonAuthClient | null {
   if (client !== undefined) return client;
-  const url = import.meta.env.VITE_NEON_AUTH_URL?.trim();
+  const url = pickNeonAuthUrl(import.meta.env.VITE_NEON_AUTH_URL, import.meta.env.SERVERSIDE_NEON_VITE_NEON_AUTH_URL);
   client = url ? createClient(url) : null;
   return client;
 }
