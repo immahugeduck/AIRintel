@@ -43,3 +43,20 @@ describe("readConfig Neon Auth URLs", () => {
     expect(config.neonAuthJwksUrl).toBeUndefined();
   });
 });
+
+describe("readConfig database URL", () => {
+  it("uses the SERVERSIDE_NEON_ database when sign-in comes from that connection", () => {
+    const config = readConfig({ DATABASE_URL: "postgres://old", SERVERSIDE_NEON_NEON_AUTH_BASE_URL: PREFIXED, SERVERSIDE_NEON_DATABASE_URL: "postgres://serverside" });
+    expect(config.databaseUrl).toBe("postgres://serverside");
+  });
+
+  it("keeps the plain DATABASE_URL when the plain auth URL is set", () => {
+    const config = readConfig({ DATABASE_URL: "postgres://plain", NEON_AUTH_BASE_URL: PLAIN, SERVERSIDE_NEON_DATABASE_URL: "postgres://serverside" });
+    expect(config.databaseUrl).toBe("postgres://plain");
+  });
+
+  it("falls back to the plain DATABASE_URL when the connection has no database URL", () => {
+    const config = readConfig({ DATABASE_URL: "postgres://plain", SERVERSIDE_NEON_NEON_AUTH_BASE_URL: PREFIXED });
+    expect(config.databaseUrl).toBe("postgres://plain");
+  });
+});

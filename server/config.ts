@@ -49,6 +49,18 @@ function resolveNeonAuth(env: Env): { baseUrl: string | undefined; jwksUrl: stri
 }
 
 /**
+ * Database URL. Access grants are keyed by the Neon Auth user id, so the database must be the one that hosts
+ * that Neon Auth instance. When sign-in comes from the SERVERSIDE_NEON_ connection (plain NEON_AUTH_BASE_URL unset)
+ * and that connection also provides a database URL, use it; otherwise fall back to the plain DATABASE_URL.
+ */
+function resolveDatabaseUrl(env: Env): string | undefined {
+  const prefixedDb = nonEmpty(env[`${VERCEL_NEON_ENV_PREFIX}DATABASE_URL`]);
+  const authIsPrefixed = !nonEmpty(env.NEON_AUTH_BASE_URL) && Boolean(nonEmpty(env[`${VERCEL_NEON_ENV_PREFIX}NEON_AUTH_BASE_URL`]));
+  if (authIsPrefixed && prefixedDb) return prefixedDb;
+  return nonEmpty(env.DATABASE_URL) ?? prefixedDb;
+}
+
+/**
  * Reads server configuration from the environment.
  * On Neon Functions DATABASE_URL, NEON_AUTH_BASE_URL and NEON_AUTH_JWKS_URL are injected automatically.
  * On Vercel the Neon integration injects SERVERSIDE_NEON_NEON_AUTH_BASE_URL, which is used when the plain name is unset.
@@ -63,7 +75,7 @@ export function readConfig(env: Env = process.env): ServerConfig {
   const neonAuth = resolveNeonAuth(env);
 
   return {
-    databaseUrl: env.DATABASE_URL || undefined,
+    databaseUrl: resolveDatabaseUrl(env),
     neonAuthBaseUrl: neonAuth.baseUrl,
     neonAuthJwksUrl: neonAuth.jwksUrl,
     allowedOrigins,
