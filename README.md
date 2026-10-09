@@ -6,6 +6,14 @@ AIRIntel (AirRoute Intelligence) is an evidence-based live and historical aircra
 
 This repository contains no simulated or mock aircraft. Without approved Mapbox and aircraft-provider configuration, the application shows honest configuration-required states.
 
+## App overview (mobile-first)
+
+- **Navigation:** bottom tab bar on phones (Map · Aircraft · Netted · History · More), left sidebar with the map always visible on screens ≥ 1024 px. Safe-area aware (`viewport-fit=cover`), 16 px inputs (no iOS zoom), ≥ 44 px touch targets, no horizontal scrolling down to 360 px.
+- **My location & radius (More tab):** defaults to a **7 statute-mile** radius (`WATCH_RADIUS_MI = 7`, ≈ 6.08 NM) around `VITE_DEFAULT_CENTER_LAT/LON`. Tap **Use my current location** to ask the browser for geolocation (never requested automatically), or enter coordinates manually. The choice is stored only in this browser.
+- **Aircraft in radius:** one clean row per aircraft — call sign, distance (mi), altitude (ft), speed (mph, converted from ground speed in knots) and last seen (`10/8/26 @ 4:40pm`, device time zone), nearest first. Missing values show `—`/Unknown. Tap a row to highlight it on the map.
+- **Netted aircraft:** every aircraft observed inside your radius, with an **entry counter** (how many separate times it came inside), first/last seen, closest approach and a sourced description (registration, provider type code, FAA registry make/model/owner and documented operator when available — otherwise Unknown). Computed server-side from real recorded observations by `GET /api/history?action=netted&lat&lon&radiusMi&hours` (JWT + `history` grant). See [`docs/netted-aircraft.md`](docs/netted-aircraft.md).
+- **Live recording:** when a signed-in user with the `history` grant has the app open, the live gateway writes the real adsb.lol observations it returns through the existing flight recorder, so new aircraft appear in the Netted log. Anonymous viewers never cause writes.
+
 ## Mapbox setup
 
 AIRIntel keeps Leaflet as the map engine and uses Mapbox Static Tiles as the basemap. The browser requires a **public Mapbox access token** beginning with `pk.`. Never use or commit a Mapbox secret token in frontend configuration.
@@ -75,6 +83,9 @@ vercel env pull .env.local
 ```
 
 ## Verification
+
+A dev-only layout harness (`npm run dev`, then open `/e2e/harness.html?view=aircraft|netted`) renders the list components with clearly labeled synthetic **test fixtures**. It is not part of `vite build` and must never be deployed.
+
 
 ```powershell
 npm run typecheck
