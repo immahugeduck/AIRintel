@@ -1,12 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
-import { Circle, Marker, MapContainer, Polyline, TileLayer, Tooltip, ZoomControl, useMap } from "react-leaflet";
+import { createPortal } from "react-dom";
+import { Circle, CircleMarker, Marker, MapContainer, Polyline, TileLayer, Tooltip, ZoomControl, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import "./mapbox-settings.css";
 import { divIcon, latLng, type LatLngExpression } from "leaflet";
 import { watchAreaBounds } from "../domain/geometry";
 import { segmentTracksByProvider, type TrackPoint, type AircraftObservation } from "../domain/aircraft";
+import { WATCH_RADIUS_MI, formatAltitudeFt, formatLastSeen, formatSpeedMph, milesToMeters, milesToNm } from "../domain/units";
 
-type Props = { id?: string; center: LatLngExpression; radiusNm?: number; observations?: AircraftObservation[]; selectedIcao24?: string | null; onSelectAircraft?: (icao24: string) => void; trackPoints?: TrackPoint[]; replayIndex?: number };
+type Props = { id?: string; settingsOpen?: boolean; onSettingsOpenChange?: (open: boolean) => void; center: LatLngExpression; radiusMi?: number; observations?: AircraftObservation[]; selectedIcao24?: string | null; onSelectAircraft?: (icao24: string) => void; trackPoints?: TrackPoint[]; replayIndex?: number };
+
+/** Map colors mirror the CSS tokens in styles.css (--sky / --amber / --signal). */
+const MAP_COLORS = { aircraft: "#8cc4f2", selected: "#f2b544", radius: "#f2b544", trail: "#8cc4f2", me: "#7fd6a4" } as const;
+
+/** Leaflet only listens to window resizes; panels and tab switches resize the map container too. */
+function MapResizer() {
+  const map = useMap();
+  useEffect(() => {
+    const container = map.getContainer();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => map.invalidateSize({ pan: false }));
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [map]);
+  return null;
+}
 
 const NO_OBSERVATIONS: AircraftObservation[] = [];
 const NO_TRACK_POINTS: TrackPoint[] = [];
@@ -14,7 +32,7 @@ const NO_TRACK_POINTS: TrackPoint[] = [];
 function MapCenter({ center, radiusNm }: { center: LatLngExpression; radiusNm: number }) {
   const map = useMap();
   const { lat, lng } = latLng(center);
-  useEffect(() => { map.fitBounds(watchAreaBounds(lat, lng, radiusNm), { padding: [24, 24] }); }, [map, lat, lng, radiusNm]);
+  useEffect(() => { map.fitBounds(watchAreaBounds(lat, lng, radiusNm), { padding: [16, 16] }); }, [map, lat, lng, radiusNm]);
   return null;
 }
 
@@ -22,9 +40,10 @@ function aircraftIcon(trackDeg: number | null | undefined, selected: boolean) {
   const known = trackDeg != null;
   return divIcon({
     className: "aircraft-direction-marker",
-    iconSize: [28, 28],
-    iconAnchor: [14, 14],
-    html: `<div style="width:28px;height:28px;display:grid;place-items:center;color:${selected ? "#f0b85c" : "#37d4b5"};filter:drop-shadow(0 1px 2px #000);transform:rotate(${known ? trackDeg : 0}deg)"><svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">${known ? '<path d="M12 2 L14 2 L15 10 L24 16 L24 18 L15 15 L15 21 L19 24 L19 25 L13 23 L7 25 L7 24 L11 21 L11 15 L2 18 L2 16 L11 10 Z" fill="currentColor" stroke="white" stroke-width="1.5"/>' : '<circle cx="13" cy="13" r="8" fill="currentColor" stroke="white" stroke-width="2"/>'}</svg></div>`,
+    // 44px hit area for touch; the glyph itself stays 26px.
+    iconSize: [44, 44],
+    iconAnchor: [22, 22],
+    html: `<div style="width:44px;height:44px;display:grid;place-items:center;color:${selected ? MAP_COLORS.selected : MAP_COLORS.aircraft};filter:drop-shadow(0 1px 2px rgba(0,0,0,.8));transform:rotate(${known ? trackDeg : 0}deg)"><svg width="${selected ? 30 : 26}" height="${selected ? 30 : 26}" viewBox="0 0 26 26" aria-hidden="true">${known ? '<path d="M12 2 L14 2 L15 10 L24 16 L24 18 L15 15 L15 21 L19 24 L19 25 L13 23 L7 25 L7 24 L11 21 L11 15 L2 18 L2 16 L11 10 Z" fill="currentColor" stroke="#0b1117" stroke-width="1.2"/>' : '<circle cx="13" cy="13" r="8" fill="currentColor" stroke="#0b1117" stroke-width="2"/>'}</svg></div>`,
   });
 }
 
@@ -35,7 +54,7 @@ type StoredMapboxConfig = {
 
 const MAPBOX_STORAGE_KEY = "airintel.mapbox.config";
 const DEFAULT_MAPBOX_STYLE = "mapbox/streets-v12";
-const sourceColors = ["#37d4b5", "#f0b85c", "#79a8ff", "#e886b7"];
+const sourceColors = ["#8cc4f2", "#f2b544", "#7fd6a4", "#e3a0c8"];
 
 const normalizeStyle = (input: string) => {
   const normalized = input.trim().replace(/^mapbox:\/\/styles\//i, "").replace(/^https:\/\/api\.mapbox\.com\/styles\/v1\//i, "");
@@ -64,10 +83,14 @@ const envConfig = (): StoredMapboxConfig | null => {
   return { accessToken, style };
 };
 
-export function LiveMap({ id, center, radiusNm = 20, observations = NO_OBSERVATIONS, selectedIcao24, onSelectAircraft, trackPoints = NO_TRACK_POINTS, replayIndex = 0 }: Props) {
+export function LiveMap({ id, settingsOpen, onSettingsOpenChange, center, radiusMi = WATCH_RADIUS_MI, observations = NO_OBSERVATIONS, selectedIcao24, onSelectAircraft, trackPoints = NO_TRACK_POINTS, replayIndex = 0 }: Props) {
   const initialConfig = useMemo(() => loadStoredConfig() ?? envConfig(), []);
   const [mapboxConfig, setMapboxConfig] = useState<StoredMapboxConfig | null>(initialConfig);
-  const [setupOpen, setSetupOpen] = useState(initialConfig === null);
+  const radiusNm = milesToNm(radiusMi);
+  // Never open a modal on first load (it blocked phones); the map shows a setup prompt instead.
+  const [localSetupOpen, setLocalSetupOpen] = useState(false);
+  const setupOpen = settingsOpen ?? localSetupOpen;
+  const setSetupOpen = (open: boolean) => { setLocalSetupOpen(open); onSettingsOpenChange?.(open); };
   const [tokenInput, setTokenInput] = useState(initialConfig?.accessToken ?? "");
   const [styleInput, setStyleInput] = useState(initialConfig?.style ?? DEFAULT_MAPBOX_STYLE);
   const [showTrails, setShowTrails] = useState(true);
@@ -107,6 +130,13 @@ export function LiveMap({ id, center, radiusNm = 20, observations = NO_OBSERVATI
     ? `https://api.mapbox.com/styles/v1/${mapboxConfig.style}/tiles/512/{z}/{x}/{y}@2x?access_token=${encodeURIComponent(mapboxConfig.accessToken)}`
     : null;
 
+  useEffect(() => {
+    if (!setupOpen) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { setLocalSetupOpen(false); onSettingsOpenChange?.(false); } };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setupOpen, onSettingsOpenChange]);
+
   const saveMapboxConfig = () => {
     const token = tokenInput.trim();
     const style = normalizeStyle(styleInput);
@@ -140,25 +170,21 @@ export function LiveMap({ id, center, radiusNm = 20, observations = NO_OBSERVATI
 
   return (
     <section id={id} className="map-panel" aria-labelledby="map-heading">
-      <div className="panel-heading">
-        <div>
-          <p className="eyebrow">Observed positions</p>
-          <h2 id="map-heading">Live map</h2>
-        </div>
+      <div className="map-toolbar">
+        <h2 id="map-heading" className="sr-only">Live map</h2>
+        <span className={`status-pill ${configured ? "is-ok" : "is-warn"}`}>{configured ? "Basemap on" : "Basemap needed"}</span>
         <div className="map-heading-actions">
-          <span className={`status-chip ${configured ? "ready" : "blocked"}`}>
-            {configured ? "Basemap connected" : "Mapbox configuration required"}
-          </span>
-          <button type="button" className="ghost-button" aria-pressed={showTrails} onClick={() => setShowTrails(!showTrails)}>Trails</button>
-          <button type="button" className="ghost-button" aria-pressed={showLabels} onClick={() => setShowLabels(!showLabels)}>Labels</button>
-          <button type="button" className="ghost-button" onClick={() => setSetupOpen(true)}>Basemap</button>
+          <button type="button" className="chip-toggle" aria-pressed={showTrails} onClick={() => setShowTrails(!showTrails)}>Trails</button>
+          <button type="button" className="chip-toggle" aria-pressed={showLabels} onClick={() => setShowLabels(!showLabels)}>Labels</button>
+          <button type="button" className="chip-toggle" onClick={() => setSetupOpen(true)}>Map settings</button>
         </div>
       </div>
-      <p className="map-legend"><span>✈ Observed track direction</span><span>● Direction unknown</span><span>— Live trail · 10 min</span><span className="selected-key">Gold · selected aircraft</span></p>
       <div className="map-frame">
-        <MapContainer center={center} zoom={9} zoomControl={false} className="map" aria-label="Aircraft map">
+        <MapContainer center={center} zoom={10} zoomControl={false} className="map" aria-label="Aircraft map" tapTolerance={20}>
+          <MapResizer />
           <MapCenter center={center} radiusNm={radiusNm} />
-          <Circle center={center} radius={radiusNm * 1852} pathOptions={{ color: "#79a8ff", weight: 1.5, dashArray: "6 6", fillOpacity: 0.04 }}><Tooltip>Watch radius: {radiusNm} NM</Tooltip></Circle>
+          <Circle center={center} radius={milesToMeters(radiusMi)} pathOptions={{ color: MAP_COLORS.radius, weight: 1.5, dashArray: "6 6", fillOpacity: 0.05 }} interactive={false} />
+          <CircleMarker center={center} radius={7} pathOptions={{ color: "#0b1117", weight: 2, fillColor: MAP_COLORS.me, fillOpacity: 1 }}><Tooltip direction="bottom">My location · {radiusMi} mi radius</Tooltip></CircleMarker>
           <ZoomControl position="bottomright" />
           {tileUrl ? (
             <TileLayer
@@ -171,17 +197,16 @@ export function LiveMap({ id, center, radiusNm = 20, observations = NO_OBSERVATI
           ) : null}
           {showTrails && liveTracks.map(({ key, tracks }) => tracks.map((track) => track.segments
             .filter((segment) => segment.kind === "observed" && segment.points.length > 1)
-            .map((segment, index) => <Polyline key={`live:${key}:${index}`} positions={segment.points.map((point) => [point.latitude, point.longitude] as LatLngExpression)} pathOptions={{ color: "#37d4b5", weight: 2, opacity: 0.6 }} />)))}
+            .map((segment, index) => <Polyline key={`live:${key}:${index}`} positions={segment.points.map((point) => [point.latitude, point.longitude] as LatLngExpression)} pathOptions={{ color: MAP_COLORS.trail, weight: 2, opacity: 0.55 }} />)))}
           {observations.map((point) => <Marker
             key={`live:${point.provider}:${point.icao24}`}
             position={[point.latitude, point.longitude]}
             icon={aircraftIcon(point.trackDeg, point.icao24 === selectedIcao24)}
             eventHandlers={{ click: () => onSelectAircraft?.(point.icao24) }}
           ><Tooltip direction="top" permanent={showLabels || point.icao24 === selectedIcao24}>
-            <strong>{point.registration ?? point.callsign ?? point.icao24}</strong><br />
-            {point.provider} | Observed {new Date(point.observedAt).toISOString()}<br />
-            Track direction: {point.trackDeg == null ? "Unknown" : `${point.trackDeg.toFixed(0)}°`}<br />
-            Ground speed: {point.groundSpeedKt == null ? "Unknown" : `${point.groundSpeedKt.toFixed(0)} kt`}
+            <strong>{point.callsign ?? point.registration ?? point.icao24.toUpperCase()}</strong><br />
+            {formatAltitudeFt(point.altitudeFt, point.onGround)} · {formatSpeedMph(point.groundSpeedKt)}<br />
+            Seen {formatLastSeen(point.observedAt)} · {point.provider}
           </Tooltip></Marker>)}
           {providerTracks.map((track, sourceIndex) => track.segments.map((segment, segmentIndex) => (
             <Polyline
@@ -192,43 +217,45 @@ export function LiveMap({ id, center, radiusNm = 20, observations = NO_OBSERVATI
           )))}
           {replayPoint && <Marker position={[replayPoint.latitude, replayPoint.longitude]} icon={aircraftIcon(replayPoint.trackDeg, true)}><Tooltip permanent direction="top">{replayPoint.registration ?? replayPoint.callsign ?? replayPoint.icao24}</Tooltip></Marker>}
         </MapContainer>
+        <p className="map-legend" aria-label="Map legend"><span><i className="dot dot-aircraft" />Aircraft</span><span><i className="dot dot-selected" />Selected</span><span><i className="dot dot-me" />Me</span></p>
         {!configured && (
           <div className="map-blocker" role="status">
             <span className="radar-mark" aria-hidden="true" />
-            <strong>Mapbox setup required</strong>
-            <p>Add a browser-safe Mapbox public token to display the basemap. Aircraft data and route analysis remain separate from the basemap provider.</p>
-            <button type="button" className="ghost-button" onClick={() => setSetupOpen(true)}>Configure Mapbox</button>
+            <strong>Basemap not connected</strong>
+            <p>Aircraft still plot on the grid. Add a public Mapbox token (pk.…) to show streets and terrain.</p>
+            <button type="button" className="button button-ghost" onClick={() => setSetupOpen(true)}>Connect Mapbox</button>
           </div>
         )}
       </div>
 
-      {setupOpen && (
-        <div className="mapbox-dialog-backdrop" role="presentation">
+      {setupOpen && createPortal(
+        <div className="mapbox-dialog-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setSetupOpen(false); }}>
           <section className="mapbox-dialog" role="dialog" aria-modal="true" aria-labelledby="mapbox-dialog-title">
             <div className="mapbox-dialog-heading">
               <div>
                 <p className="eyebrow">Basemap configuration</p>
                 <h3 id="mapbox-dialog-title">Connect Mapbox</h3>
               </div>
-              <button type="button" className="dialog-close" aria-label="Close Mapbox settings" onClick={() => setSetupOpen(false)}>×</button>
+              <button type="button" className="icon-button" aria-label="Close Mapbox settings" onClick={() => setSetupOpen(false)}>×</button>
             </div>
             <p className="mapbox-dialog-copy">Enter a public Mapbox access token and a published style. This browser setup is stored only on this device. For deployment, configure the same values as environment variables.</p>
             <label>
               Public access token
-              <input type="password" autoComplete="off" spellCheck={false} value={tokenInput} placeholder="pk.eyJ..." onChange={(event) => setTokenInput(event.currentTarget.value)} />
+              <input type="password" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={tokenInput} placeholder="pk.eyJ..." onChange={(event) => setTokenInput(event.currentTarget.value)} />
             </label>
             <label>
               Mapbox style
-              <input type="text" autoComplete="off" spellCheck={false} value={styleInput} placeholder="mapbox/streets-v12" onChange={(event) => setStyleInput(event.currentTarget.value)} />
+              <input type="text" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={styleInput} placeholder="mapbox/streets-v12" onChange={(event) => setStyleInput(event.currentTarget.value)} />
               <small>Accepted: username/style-id or mapbox://styles/username/style-id. Static Leaflet tiles do not currently support Mapbox Standard.</small>
             </label>
             {setupError && <p className="mapbox-dialog-error" role="alert">{setupError}</p>}
             <div className="mapbox-dialog-actions">
-              {configured && <button type="button" className="ghost-button" onClick={clearLocalMapboxConfig}>Reset local config</button>}
-              <button type="button" className="mapbox-save-button" onClick={saveMapboxConfig}>Save Mapbox settings</button>
+              {configured && <button type="button" className="button button-ghost" onClick={clearLocalMapboxConfig}>Reset local config</button>}
+              <button type="button" className="button button-primary" onClick={saveMapboxConfig}>Save Mapbox settings</button>
             </div>
           </section>
-        </div>
+        </div>,
+        document.body,
       )}
     </section>
   );

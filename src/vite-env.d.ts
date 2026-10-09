@@ -12,6 +12,7 @@ interface ImportMetaEnv {
   readonly SERVERSIDE_NEON_VITE_NEON_AUTH_URL?: string;
   readonly VITE_DEFAULT_CENTER_LAT?: string;
   readonly VITE_DEFAULT_CENTER_LON?: string;
-  readonly VITE_DEFAULT_RADIUS_NM?: string;
+  /** Default watch radius in statute miles (7 when unset). */
+  readonly VITE_DEFAULT_RADIUS_MI?: string;
   readonly VITE_POLL_INTERVAL_SECONDS?: string;
 }

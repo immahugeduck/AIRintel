@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { distanceNm } from "../../src/domain/geometry.js";
+import { NETTED_ALGORITHM_VERSION, countRadiusVisits, nettedQuerySchema, toNettedDto, type VisitObservation } from "../../src/domain/netted.js";
+import { VISIT_GAP_MINUTES, milesToMeters, milesToNm } from "../../src/domain/units.js";
 import { iso, type Queryable } from "../db.js";
 import type { AppVariables } from "../http.js";
 
@@ -30,6 +32,7 @@ export function historyRoutes(db: Queryable) {
       if (action === "route-summary") return await routeSummary(c.req.query("icao24"), clampHours(c.req.query("hours"), 72));
       if (action === "nearby") return await nearby(c.req.query("lat"), c.req.query("lon"), c.req.query("radiusNm"), clampHours(c.req.query("hours"), 72));
       if (action === "track") return await track(c.req.query("icao24"), clampHours(c.req.query("hours"), 24));
+      if (action === "netted") return await netted();
       return c.json({ error: "invalid_action" }, 400);
     } catch (error) {
       console.error("[history] query failed:", error instanceof Error ? error.message : error);
@@ -142,8 +145,8 @@ export function historyRoutes(db: Queryable) {
       if (rawLat == null || rawLon == null || !Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(radiusNm) || lat < -90 || lat > 90 || lon < -180 || lon > 180 || radiusNm <= 0 || radiusNm > 100 || !Number.isFinite(hours)) return c.json({ error: "invalid_spatial_query" }, 400);
       const windowEnd = new Date();
       const windowStart = new Date(windowEnd.getTime() - hours * 3_600_000);
-      const { rows } = await db.query<AircraftRow & { callsign: string | null; latitude: number; longitude: number; altitude_ft: number | null; observed_at: Date }>(
-        `select ${aircraftColumns}, p.callsign, p.latitude, p.longitude, p.altitude_ft, p.observed_at
+      const { rows } = await db.query<AircraftRow & { callsign: string | null; latitude: number; longitude: number; altitude_ft: number | null; ground_speed_kt: number | null; on_ground: boolean | null; observed_at: Date }>(
+        `select ${aircraftColumns}, p.callsign, p.latitude, p.longitude, p.altitude_ft, p.ground_speed_kt, p.on_ground, p.observed_at
            from public.aircraft_positions p join public.aircraft a on a.id = p.aircraft_id
           where p.observed_at >= $1 and p.observed_at <= $2 order by p.observed_at desc limit 5000`,
         [windowStart, windowEnd],
@@ -152,12 +155,78 @@ export function historyRoutes(db: Queryable) {
         .map((row) => {
           const observedDistanceNm = distanceNm(lat, lon, row.latitude, row.longitude);
           if (observedDistanceNm > radiusNm) return null;
-          return { icao24: row.icao24, registration: row.registration, callsign: row.callsign ?? null, latitude: row.latitude, longitude: row.longitude, observedAt: iso(row.observed_at), distanceNm: observedDistanceNm, altitudeFt: row.altitude_ft ?? null };
+          return { icao24: row.icao24, registration: row.registration, callsign: row.callsign ?? null, latitude: row.latitude, longitude: row.longitude, observedAt: iso(row.observed_at), distanceNm: observedDistanceNm, altitudeFt: row.altitude_ft ?? null, groundSpeedKt: row.ground_speed_kt ?? null, onGround: row.on_ground ?? null };
         })
         .filter((value): value is NonNullable<typeof value> => value != null)
         .filter((value, index, values) => values.findIndex((other) => other.icao24 === value.icao24) === index)
         .slice(0, 50);
       return c.json({ query: { latitude: lat, longitude: lon, radiusNm }, receivedAt: new Date().toISOString(), matches });
+    }
+
+    /**
+     * Aircraft netted inside the watch radius with a per-aircraft visit counter computed from REAL recorded
+     * observations (see countRadiusVisits in src/domain/netted.ts for the deterministic visit definition).
+     * Positions inside a 3x context ring are loaded for aircraft that were ever inside, so exits are detected
+     * when the recorder captured them; otherwise the reception-gap rule separates visits.
+     */
+    async function netted() {
+      const parsed = nettedQuerySchema.safeParse({ lat: c.req.query("lat"), lon: c.req.query("lon"), radiusMi: c.req.query("radiusMi") || undefined, hours: c.req.query("hours") || undefined });
+      if (!parsed.success || !c.req.query("lat")?.trim() || !c.req.query("lon")?.trim()) return c.json({ error: "invalid_netted_query" }, 400);
+      const { lat, lon, radiusMi, hours } = parsed.data;
+      const radiusNm = milesToNm(radiusMi);
+      const windowEnd = new Date();
+      const windowStart = new Date(windowEnd.getTime() - hours * 3_600_000);
+      const rowLimit = 50_000;
+      // Geography distances are spheroidal; the 1% pad keeps boundary aircraft in the candidate set and the
+      // authoritative inside/outside decision is made by countRadiusVisits with the same haversine used everywhere else.
+      const { rows } = await db.query<{ icao24: string; registration: string | null; callsign: string | null; observation_registration: string | null; latitude: number; longitude: number; observed_at: Date }>(
+        `with center as (select public.st_setsrid(public.st_makepoint($2::double precision, $1::double precision), 4326)::public.geography as point),
+              hits as (
+                select distinct p.aircraft_id from public.aircraft_positions p, center
+                 where p.observed_at >= $4::timestamptz and p.observed_at <= $5::timestamptz and public.st_dwithin(p.position, center.point, $3::double precision)
+              )
+         select a.icao24, a.registration, p.callsign, p.observation_registration, p.latitude, p.longitude, p.observed_at
+           from public.aircraft_positions p
+           join hits h on h.aircraft_id = p.aircraft_id
+           join public.aircraft a on a.id = p.aircraft_id, center
+          where p.observed_at >= $4::timestamptz and p.observed_at <= $5::timestamptz and public.st_dwithin(p.position, center.point, $6::double precision)
+          order by p.aircraft_id, p.observed_at
+          limit ${rowLimit + 1}`,
+        [lat, lon, milesToMeters(radiusMi) * 1.01, windowStart, windowEnd, milesToMeters(radiusMi) * 3],
+      );
+      const truncated = rows.length > rowLimit;
+      const observations: VisitObservation[] = rows.slice(0, rowLimit).map((row) => ({
+        icao24: row.icao24,
+        observedAt: iso(row.observed_at)!,
+        latitude: row.latitude,
+        longitude: row.longitude,
+        callsign: row.callsign,
+        registration: row.observation_registration ?? row.registration,
+      }));
+      const summaries = countRadiusVisits(observations, { latitude: lat, longitude: lon, radiusNm, gapMinutes: VISIT_GAP_MINUTES }).slice(0, 500);
+      const typeCodes = new Map<string, string>();
+      if (summaries.length > 0) {
+        // Provider-reported type designator (adsb.lol "t") from the latest retained raw observation; Unknown when absent.
+        const types = await db.query<{ icao24: string; type_code: string | null }>(
+          `select distinct on (a.icao24) a.icao24, nullif(trim(r.payload->>'t'), '') as type_code
+             from public.aircraft a
+             join public.aircraft_positions p on p.aircraft_id = a.id
+             join airintel_private.raw_observations r on r.position_id = p.id
+            where a.icao24 = any($1::text[]) and p.observed_at >= $2 and r.payload ? 't'
+            order by a.icao24, p.observed_at desc`,
+          [summaries.map((summary) => summary.icao24), windowStart],
+        );
+        for (const row of types.rows) if (row.type_code) typeCodes.set(row.icao24, row.type_code);
+      }
+      return c.json({
+        query: { latitude: lat, longitude: lon, radiusMi, radiusNm, hours, visitGapMinutes: VISIT_GAP_MINUTES },
+        windowStart: windowStart.toISOString(),
+        windowEnd: windowEnd.toISOString(),
+        receivedAt: new Date().toISOString(),
+        algorithmVersion: NETTED_ALGORITHM_VERSION,
+        truncated,
+        aircraft: summaries.map((summary) => toNettedDto(summary, typeCodes.get(summary.icao24) ?? null)),
+      });
     }
 
     async function track(rawIcao: string | undefined, hours: number) {

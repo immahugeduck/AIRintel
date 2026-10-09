@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppVariables } from "../http.js";
+import { recordLiveObservations, type LiveRecordingDeps } from "../live-recording.js";
 import { fetchLiveAircraft, type AdsbProviderConfig } from "../providers/adsb.js";
 
 const querySchema = z.object({
@@ -10,7 +11,7 @@ const querySchema = z.object({
 });
 
 /** Live-aircraft gateway. Providers are gated by docs/provider-onboarding.md and ADSB_* env. */
-export function aircraftRoutes(options: { adsb: AdsbProviderConfig | null }) {
+export function aircraftRoutes(options: { adsb: AdsbProviderConfig | null; recording?: LiveRecordingDeps | null }) {
   const app = new Hono<{ Variables: AppVariables }>();
   app.get("/", async (c) => {
     const parsed = querySchema.safeParse(c.req.query());
@@ -18,7 +19,9 @@ export function aircraftRoutes(options: { adsb: AdsbProviderConfig | null }) {
     if (!options.adsb) return c.json({ error: "provider_not_configured" }, 503);
     try {
       const result = await fetchLiveAircraft(options.adsb, parsed.data);
-      return c.json(result);
+      // Signed-in users with the history grant contribute these real observations to the flight recorder.
+      const recording = await recordLiveObservations(options.recording ?? null, c.req.header("authorization"), parsed.data.radiusNm, result);
+      return c.json({ observations: result.observations, receivedAt: result.receivedAt, sources: result.sources, recording: recording.status });
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? String((error as { code?: string }).code) : "";
       if (code === "provider_adapter_not_implemented") return c.json({ error: "provider_adapter_not_implemented" }, 501);

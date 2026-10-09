@@ -66,7 +66,13 @@ export type LiveAircraftResult = {
   observations: LiveAircraftObservation[];
   receivedAt: string;
   sources: string[];
+  /** Server-only: the provider's raw row per providerRecordId, for the flight recorder. Never sent to the browser. */
+  rawByRecordId?: ReadonlyMap<string, unknown>;
 };
+
+/** Provider schema / normalization identities stored with every recorded adsb.lol observation. */
+export const ADSB_LOL_PROVIDER_SCHEMA_VERSION = "adsb_lol/v2";
+export const ADSB_LOL_NORMALIZATION_VERSION = "airintel-adsb-lol-normalize-1";
 
 export function resolveAdsbConfig(env: Record<string, string | undefined> = process.env): AdsbProviderConfig | null {
   // Default to the documented public adsb.lol feed so same-origin Vercel previews can load live aircraft
@@ -186,15 +192,20 @@ export async function fetchAdsbLolNearby(
   const receivedAtMs = Date.now();
   const providerNowMs = typeof payload.now === "number" ? payload.now : receivedAtMs;
   const observations: LiveAircraftObservation[] = [];
+  const rawByRecordId = new Map<string, unknown>();
   for (const row of payload.ac ?? []) {
     const observation = normalizeAdsbLolAircraft(row, receivedAtMs, providerNowMs);
-    if (observation) observations.push(observation);
+    if (observation) {
+      observations.push(observation);
+      if (observation.providerRecordId) rawByRecordId.set(observation.providerRecordId, row);
+    }
   }
 
   return {
     observations,
     receivedAt: new Date(receivedAtMs).toISOString(),
     sources: ["adsb_lol"],
+    rawByRecordId,
   };
 }
 
