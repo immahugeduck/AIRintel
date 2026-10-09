@@ -49,10 +49,15 @@ export const radiusQuerySchema = z.object({
 
 export type RadiusQuery = z.infer<typeof radiusQuerySchema>;
 
+/** Whether the server wrote this live response to the flight recorder for the signed-in user (see server/live-recording.ts). */
+export const liveRecordingStatusSchema = z.enum(["recorded", "not_signed_in", "no_history_access", "unavailable", "rate_limited", "radius_too_large", "timeout", "failed"]);
+export type LiveRecordingStatus = z.infer<typeof liveRecordingStatusSchema>;
+
 export const aircraftResponseSchema = z.object({
   observations: z.array(observationSchema),
   receivedAt: z.iso.datetime({ offset: true }),
   sources: z.array(z.string().min(1)),
+  recording: liveRecordingStatusSchema.optional(),
 });
 
 export const aircraftSummarySchema = z.object({
@@ -158,6 +163,8 @@ export const nearbyAircraftResponseSchema = z.object({
       observedAt: z.iso.datetime({ offset: true }),
       distanceNm: z.number().nonnegative(),
       altitudeFt: z.number().nullable(),
+      groundSpeedKt: z.number().finite().nonnegative().nullable().optional(),
+      onGround: z.boolean().nullable().optional(),
     }),
   ),
 });

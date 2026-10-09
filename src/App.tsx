@@ -1,219 +1,264 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { fetchAircraft } from "./api/aircraft";
-import { fetchNearbyAircraft, fetchRecentTrack, fetchRouteSummary, fetchTrackInsights, searchAircraft } from "./api/history";
+import { fetchNearbyAircraft, fetchNettedAircraft, fetchRecentTrack, fetchRouteSummary, fetchTrackInsights, searchAircraft } from "./api/history";
 import { fetchAircraftProfile } from "./api/profile";
+import { AircraftList } from "./components/AircraftList";
 import { AircraftProfilePanel } from "./components/AircraftProfilePanel";
-import { AuthPanel } from "./components/AuthPanel";
+import { AccountSummary, AuthForm, AuthPanel } from "./components/AuthPanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
-import { LiveMap } from "./components/LiveMap";
 import { EvidenceUploadPanel } from "./components/EvidenceUploadPanel";
+import { BrandMark, HistoryIcon, ListIcon, MapIcon, MoreIcon, NetIcon, PinIcon } from "./components/Icons";
+import { LiveMap } from "./components/LiveMap";
+import { LocationPanel } from "./components/LocationPanel";
+import { NettedPanel, type NettedState } from "./components/NettedPanel";
 import { ReplayPanel } from "./components/ReplayPanel";
-import { distanceNm } from "./domain/geometry";
+import { SelectedDock } from "./components/SelectedDock";
 import type { AircraftObservation } from "./domain/aircraft";
-import { AuthenticationRequiredError, ProviderNotConfiguredError } from "./providers/contracts";
+import { NETTED_DEFAULT_HOURS, countRadiusVisits, toNettedDto } from "./domain/netted";
+import { buildRadiusRows } from "./domain/radius-list";
+import { VISIT_GAP_MINUTES, knotsToMph, milesToNm, nmToMiles } from "./domain/units";
+import { useSession } from "./lib/session";
+import { loadWatchArea, saveWatchArea, type WatchArea } from "./lib/watch-area";
+import { AccessDeniedError, AuthenticationRequiredError, ProviderNotConfiguredError } from "./providers/contracts";
+
+export type View = "map" | "aircraft" | "netted" | "history" | "more";
+const NAV: { id: View; label: string; icon: () => ReactNode }[] = [
+  { id: "map", label: "Map", icon: MapIcon },
+  { id: "aircraft", label: "Aircraft", icon: ListIcon },
+  { id: "netted", label: "Netted", icon: NetIcon },
+  { id: "history", label: "History", icon: HistoryIcon },
+  { id: "more", label: "More", icon: MoreIcon },
+];
 
 const envNumber = (value: string | undefined, fallback: number) => {
   const parsed = value?.trim() ? Number(value) : NaN;
   return Number.isFinite(parsed) ? parsed : fallback;
 };
-
+const SESSION_WINDOW_MS = 6 * 3_600_000;
 
 export default function App() {
-  const [latitude, setLatitude] = useState(Math.max(-90, Math.min(90, envNumber(import.meta.env.VITE_DEFAULT_CENTER_LAT, 39.7684))));
-  const [longitude, setLongitude] = useState(Math.max(-180, Math.min(180, envNumber(import.meta.env.VITE_DEFAULT_CENTER_LON, -86.1581))));
-  const [radiusNm, setRadiusNm] = useState(Math.max(1, Math.min(100, envNumber(import.meta.env.VITE_DEFAULT_RADIUS_NM, 20))));
+  const session = useSession();
+  const [view, setView] = useState<View>("map");
+  const [area, setArea] = useState<WatchArea>(() => loadWatchArea());
+  const [mapSettingsOpen, setMapSettingsOpen] = useState(false);
+  const [authPrompt, setAuthPrompt] = useState(0);
   const [searchInput, setSearchInput] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
   const [selectedIcao24, setSelectedIcao24] = useState<string | null>(null);
   const [replayIndex, setReplayIndex] = useState(0);
-  const [activeSection, setActiveSection] = useState("live-feed");
+  const { latitude, longitude, radiusMi } = area;
+  const radiusNm = milesToNm(radiusMi);
+  const signedIn = session.status === "signed-in";
+
+  const updateArea = (next: WatchArea) => { setArea(next); saveWatchArea(next); };
+  const go = (next: View) => { setView(next); window.scrollTo({ top: 0 }); };
+
   const query = useMemo(() => ({ latitude, longitude, radiusNm }), [latitude, longitude, radiusNm]);
   const pollMs = Math.max(10, envNumber(import.meta.env.VITE_POLL_INTERVAL_SECONDS, 20)) * 1000;
   const aircraft = useQuery({
-    queryKey: ["aircraft", query],
+    queryKey: ["aircraft", query, signedIn],
     queryFn: ({ signal }) => fetchAircraft(query, signal),
     refetchInterval: pollMs,
     retry: (count, error) => !(error instanceof ProviderNotConfiguredError) && count < 2,
   });
-  const search = useQuery({
-    queryKey: ["aircraft-search", submittedSearch],
-    queryFn: ({ signal }) => searchAircraft(submittedSearch, signal),
-    enabled: submittedSearch.length >= 2,
-    retry: false,
-  });
-  const track = useQuery({
-    queryKey: ["recent-track", selectedIcao24],
-    queryFn: ({ signal }) => fetchRecentTrack(selectedIcao24!, signal),
-    enabled: selectedIcao24 !== null,
-    retry: false,
-  });
-  const profile = useQuery({
-    queryKey: ["aircraft-profile", selectedIcao24],
-    queryFn: ({ signal }) => fetchAircraftProfile(selectedIcao24!, signal),
-    enabled: selectedIcao24 !== null,
-    retry: false,
-  });
-  const insights = useQuery({
-    queryKey: ["track-insights", selectedIcao24],
-    queryFn: ({ signal }) => fetchTrackInsights({ icao24: selectedIcao24!, hours: 24 }, signal),
-    enabled: selectedIcao24 !== null,
-    retry: false,
-  });
-  const routeSummary = useQuery({
-    queryKey: ["route-summary", selectedIcao24],
-    queryFn: ({ signal }) => fetchRouteSummary({ icao24: selectedIcao24!, hours: 24 }, signal),
-    enabled: selectedIcao24 !== null,
-    retry: false,
-  });
   const nearby = useQuery({
     queryKey: ["nearby-aircraft", latitude, longitude, radiusNm],
-    queryFn: ({ signal }) => fetchNearbyAircraft({ latitude, longitude, radiusNm, hours: 24 }, signal),
-    enabled: true,
+    queryFn: ({ signal }) => fetchNearbyAircraft({ latitude, longitude, radiusNm, hours: 1 }, signal),
+    enabled: signedIn,
     refetchInterval: pollMs,
     retry: false,
   });
+  const netted = useQuery({
+    queryKey: ["netted-aircraft", latitude, longitude, radiusMi],
+    queryFn: ({ signal }) => fetchNettedAircraft({ latitude, longitude, radiusMi, hours: NETTED_DEFAULT_HOURS }, signal),
+    enabled: signedIn,
+    refetchInterval: pollMs * 3,
+    retry: false,
+  });
+  // Newly recorded live observations should show up in the Netted log right away.
+  const recordedAt = aircraft.data?.recording === "recorded" ? aircraft.dataUpdatedAt : 0;
+  useEffect(() => { if (recordedAt && signedIn) void netted.refetch(); }, [recordedAt]);
 
+  const search = useQuery({ queryKey: ["aircraft-search", submittedSearch], queryFn: ({ signal }) => searchAircraft(submittedSearch, signal), enabled: submittedSearch.length >= 2, retry: false });
+  const historyEnabled = selectedIcao24 !== null && view === "history";
+  const track = useQuery({ queryKey: ["recent-track", selectedIcao24], queryFn: ({ signal }) => fetchRecentTrack(selectedIcao24!, signal), enabled: selectedIcao24 !== null && signedIn, retry: false });
+  const profile = useQuery({ queryKey: ["aircraft-profile", selectedIcao24], queryFn: ({ signal }) => fetchAircraftProfile(selectedIcao24!, signal), enabled: historyEnabled, retry: false });
+  const insights = useQuery({ queryKey: ["track-insights", selectedIcao24], queryFn: ({ signal }) => fetchTrackInsights({ icao24: selectedIcao24!, hours: 24 }, signal), enabled: historyEnabled, retry: false });
+  const routeSummary = useQuery({ queryKey: ["route-summary", selectedIcao24], queryFn: ({ signal }) => fetchRouteSummary({ icao24: selectedIcao24!, hours: 24 }, signal), enabled: historyEnabled, retry: false });
 
-  const areaKey = `${latitude}:${longitude}:${radiusNm}`;
-  const [visited, setVisited] = useState<{ area: string; observations: AircraftObservation[] }>({ area: areaKey, observations: [] });
+  // Real live observations seen during this visit (bounded), used for the session-only netted fallback.
+  const areaKey = `${latitude}:${longitude}:${radiusMi}`;
+  const [sessionObs, setSessionObs] = useState<{ area: string; observations: AircraftObservation[] }>({ area: areaKey, observations: [] });
   useEffect(() => {
-    setVisited((previous) => {
-      const rows = new Map<string, AircraftObservation>();
-      for (const observation of [...(previous.area === areaKey ? previous.observations : []), ...(aircraft.data?.observations ?? [])]) {
-        if (distanceNm(latitude, longitude, observation.latitude, observation.longitude) > radiusNm) continue;
-        const old = rows.get(observation.icao24);
-        if (!old || Date.parse(observation.observedAt) > Date.parse(old.observedAt)) rows.set(observation.icao24, observation);
+    setSessionObs((previous) => {
+      const cutoff = Date.now() - SESSION_WINDOW_MS;
+      const seen = new Map<string, AircraftObservation>();
+      for (const item of [...(previous.area === areaKey ? previous.observations : []), ...(aircraft.data?.observations ?? [])]) {
+        if (Date.parse(item.observedAt) >= cutoff) seen.set(`${item.icao24}:${item.observedAt}`, item);
       }
-      return { area: areaKey, observations: [...rows.values()] };
+      return { area: areaKey, observations: [...seen.values()].slice(-20_000) };
     });
-  }, [aircraft.data, areaKey, latitude, longitude, radiusNm]);
-  const radiusAircraft = useMemo(() => {
-    type Row = { icao24: string; registration?: string | null | undefined; callsign?: string | null | undefined; altitudeFt?: number | null | undefined; altitudeSource?: string | null | undefined; groundSpeedKt?: number | null | undefined; trackDeg?: number | null | undefined; observedAt: string; distanceNm: number; source: string };
-    const rows = new Map<string, Row>();
-    for (const item of nearby.data?.matches ?? []) {
-      const distance = distanceNm(latitude, longitude, item.latitude, item.longitude);
-      if (distance <= radiusNm) {
-        const old = rows.get(item.icao24);
-        if (!old || Date.parse(item.observedAt) > Date.parse(old.observedAt)) rows.set(item.icao24, { ...item, distanceNm: distance, source: "Recorded" });
-      }
-    }
-    for (const item of visited.area === areaKey ? visited.observations : []) {
-      const old = rows.get(item.icao24);
-      if (!old || Date.parse(item.observedAt) >= Date.parse(old.observedAt)) rows.set(item.icao24, { ...item, distanceNm: distanceNm(latitude, longitude, item.latitude, item.longitude), source: item.provider });
-    }
-    return [...rows.values()].sort((a, b) => Date.parse(b.observedAt) - Date.parse(a.observedAt));
-  }, [nearby.data, visited, areaKey, latitude, longitude, radiusNm]);
-  const selectedObservation = aircraft.data?.observations.find((item) => item.icao24 === selectedIcao24) ?? radiusAircraft.find((item) => item.icao24 === selectedIcao24);
+  }, [aircraft.data, areaKey]);
+
+  const radiusRows = useMemo(
+    () => buildRadiusRows(aircraft.data?.observations ?? [], nearby.data?.matches ?? [], { latitude, longitude }, radiusNm),
+    [aircraft.data, nearby.data, latitude, longitude, radiusNm],
+  );
+
+  const nettedState: NettedState = useMemo(() => {
+    const sessionList = () => {
+      const typeCodes = new Map<string, string>();
+      for (const item of sessionObs.observations) if (item.aircraftTypeCode) typeCodes.set(item.icao24, item.aircraftTypeCode);
+      return countRadiusVisits(sessionObs.observations, { latitude, longitude, radiusNm, gapMinutes: VISIT_GAP_MINUTES })
+        .map((summary) => toNettedDto(summary, typeCodes.get(summary.icao24) ?? null));
+    };
+    if (session.status === "unconfigured") return { kind: "session", reason: "unconfigured", aircraft: sessionList() };
+    if (session.status === "checking") return { kind: "loading" };
+    if (!signedIn) return { kind: "session", reason: "signed-out", aircraft: sessionList() };
+    if (netted.data) return { kind: "ready", source: "recorded", aircraft: netted.data.aircraft, hours: netted.data.query.hours, truncated: netted.data.truncated };
+    if (netted.error instanceof AccessDeniedError) return { kind: "session", reason: "no-access", aircraft: sessionList() };
+    if (netted.error instanceof AuthenticationRequiredError) return { kind: "session", reason: "signed-out", aircraft: sessionList() };
+    if (netted.error instanceof ProviderNotConfiguredError) return { kind: "session", reason: "unconfigured", aircraft: sessionList() };
+    if (netted.isError) return { kind: "session", reason: "error", aircraft: sessionList() };
+    return { kind: "loading" };
+  }, [session.status, signedIn, netted.data, netted.error, netted.isError, sessionObs, latitude, longitude, radiusNm]);
+
+  const selectedRow = radiusRows.find((row) => row.icao24 === selectedIcao24) ?? null;
+  const selectedNetted = nettedState.kind === "loading" ? null : nettedState.aircraft.find((item) => item.icao24 === selectedIcao24) ?? null;
   const selectAircraft = (icao24: string) => { setSelectedIcao24(icao24); setReplayIndex(0); };
 
-  const sourceState = aircraft.error instanceof ProviderNotConfiguredError ? "Configuration required" : aircraft.isError ? "Feed unavailable" : aircraft.isFetching ? "Refreshing" : "Connected";
-  const selectedLabel = selectedIcao24 ? selectedIcao24.toUpperCase() : "None";
-
-  const goToSection = (sectionId: string) => {
-    setActiveSection(sectionId);
-    document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
+  const feedState = aircraft.error instanceof ProviderNotConfiguredError ? { label: "Feed not configured", tone: "warn" } : aircraft.isError ? { label: "Feed unavailable", tone: "error" } : aircraft.isPending ? { label: "Connecting…", tone: "idle" } : { label: "Live", tone: "ok" };
+  const liveError = aircraft.error instanceof ProviderNotConfiguredError ? "No live aircraft provider is configured for this deployment. No aircraft are invented." : aircraft.isError ? aircraft.error.message : null;
+  const recordedNote = !signedIn ? null : nearby.error instanceof AccessDeniedError ? "Recorded aircraft need the history access grant; showing live aircraft only." : nearby.isError ? "Recorded aircraft are unavailable; showing live aircraft only." : null;
+  const recordingNote = aircraft.data?.recording === "recorded" ? "Recording to your Netted log" : aircraft.data?.recording === "no_history_access" ? "Not recording: history access needed" : null;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-view={view}>
       <header className="topbar">
-        <div className="brand-group">
-          <div className="brand-mark" aria-hidden="true">AI</div>
-          <div className="brand-copy"><strong>AIRIntel</strong><span>AirRoute Intelligence</span></div>
-        </div>
-        <label className="section-switcher" htmlFor="page-jump">
-          <span>View</span>
-          <select id="page-jump" value={activeSection} onChange={(event) => goToSection(event.currentTarget.value)}>
-            <option value="live-feed">Map</option>
-            <option value="radius-aircraft">Aircraft in radius</option>
-            <option value="history-search-panel">Search</option>
-            <option value="analytics">Analytics</option>
-          </select>
-        </label>
-        <AuthPanel />
-        <div className="system-state"><span className="pulse" />{sourceState}</div>
+        <div className="brand"><BrandMark /><div className="brand-copy"><strong>AIRIntel</strong><span>AirRoute Intelligence</span></div></div>
+        <span className={`status-pill is-${feedState.tone}`} role="status"><span className="pulse" aria-hidden="true" />{feedState.label}</span>
+        <AuthPanel key={authPrompt} defaultOpen={authPrompt > 0} />
       </header>
-      <main id="main">
-        <section className="airspace-toolbar" aria-label="Watch area controls">
-          <div className="query-card">
-            <div className="card-heading">
-              <div>
-                <p className="eyebrow">Watch area</p>
-                <h2>Airspace</h2>
-              </div>
-              <button type="button" className="ghost-button" onClick={() => void aircraft.refetch()} disabled={aircraft.isFetching}>Refresh</button>
-            </div>
-            <div className="query-bar">
-              <label>Latitude<input type="number" value={latitude} min={-90} max={90} step="0.0001" onChange={(e) => { const value = e.currentTarget.valueAsNumber; if (Number.isFinite(value) && value >= -90 && value <= 90) setLatitude(value); }} /></label>
-              <label>Longitude<input type="number" value={longitude} min={-180} max={180} step="0.0001" onChange={(e) => { const value = e.currentTarget.valueAsNumber; if (Number.isFinite(value) && value >= -180 && value <= 180) setLongitude(value); }} /></label>
-              <label>Radius (NM)<input type="number" value={radiusNm} min={1} max={100} onChange={(e) => { const value = e.currentTarget.valueAsNumber; if (Number.isFinite(value) && value >= 1 && value <= 100) setRadiusNm(value); }} /></label>
-            </div>
+
+      <nav className="app-nav" aria-label="Main">
+        {NAV.map(({ id, label, icon: Icon }) => (
+          <button key={id} type="button" className="nav-item" aria-current={view === id ? "page" : undefined} onClick={() => go(id)}>
+            <Icon /><span>{label}</span>
+            {id === "aircraft" && radiusRows.length > 0 && <span className="nav-badge" aria-label={`${radiusRows.length} aircraft`}>{radiusRows.length}</span>}
+          </button>
+        ))}
+      </nav>
+
+      <main id="main" className="app-main">
+        <div className="map-region">
+          <div className="map-overlay-top">
+            <button type="button" className="watch-chip" onClick={() => go("more")}>
+              <PinIcon /><span>{area.source === "device" ? "My location" : area.source === "saved" ? "Saved location" : "Default area"} · {radiusMi} mi</span>
+            </button>
+            {recordingNote && <span className="status-pill is-ok small">{recordingNote}</span>}
           </div>
-
-        </section>
-        <div className="workspace-grid">
-          <ErrorBoundary><LiveMap id="live-feed" center={[latitude, longitude]} observations={aircraft.data?.observations ?? []} selectedIcao24={selectedIcao24} onSelectAircraft={selectAircraft} radiusNm={radiusNm} trackPoints={track.data?.points ?? []} replayIndex={replayIndex} /></ErrorBoundary>
-
+          <ErrorBoundary>
+            <LiveMap id="live-feed" settingsOpen={mapSettingsOpen} onSettingsOpenChange={setMapSettingsOpen} center={[latitude, longitude]} observations={aircraft.data?.observations ?? []} selectedIcao24={selectedIcao24} onSelectAircraft={selectAircraft} radiusMi={radiusMi} trackPoints={track.data?.points ?? []} replayIndex={replayIndex} />
+          </ErrorBoundary>
         </div>
 
-        <section className="radius-panel section-panel" id="radius-aircraft" aria-labelledby="radius-heading">
-          <div className="panel-heading"><div><p className="eyebrow">Observed within {radiusNm} NM</p><h2 id="radius-heading">Aircraft in your radius <span className="count">{radiusAircraft.length}</span></h2></div><span className="table-window">This session + available records from the last 24 hours</span></div>
-          {aircraft.isError && <p className="track-error" role="alert">Live feed: {aircraft.error.message}</p>}
-          {nearby.isError && <p className="table-note">Recorded radius history unavailable. Showing aircraft observed during this session.</p>}
-          <div className="aircraft-table-scroll">
-            <table className="aircraft-table"><caption className="table-note">One row per aircraft. Distance and flight values refer to its latest available observation inside this radius. Select a row for details.</caption>
-              <thead><tr><th scope="col">#</th><th scope="col">Aircraft</th><th scope="col">Callsign</th><th scope="col">Distance (NM)</th><th scope="col">Altitude (ft)</th><th scope="col">Speed (kt)</th><th scope="col">Track (°)</th><th scope="col">Last seen (UTC)</th><th scope="col">Source</th></tr></thead>
-              <tbody>{radiusAircraft.map((item, index) => <tr key={item.icao24} className={item.icao24 === selectedIcao24 ? "selected" : ""} onClick={() => selectAircraft(item.icao24)}>
-                <td>{index + 1}</td><td><button type="button" aria-pressed={item.icao24 === selectedIcao24} onClick={() => selectAircraft(item.icao24)}>{item.registration ?? item.icao24.toUpperCase()}</button><small>{item.icao24.toUpperCase()}</small></td>
-                <td>{item.callsign ?? "—"}</td><td>{item.distanceNm.toFixed(1)}</td><td>{item.altitudeFt == null ? "—" : `${Math.round(item.altitudeFt).toLocaleString()} ${item.altitudeSource ?? ""}`}</td><td>{item.groundSpeedKt == null ? "—" : Math.round(item.groundSpeedKt)}</td><td>{item.trackDeg == null ? "—" : Math.round(item.trackDeg)}</td><td>{new Date(item.observedAt).toISOString().replace("T", " ").slice(0, 19)}</td><td>{item.source}</td>
-              </tr>)}</tbody>
-            </table>
-          </div>
-          {radiusAircraft.length === 0 && <p className="table-note" role="status">{aircraft.isFetching || nearby.isFetching ? "Loading aircraft…" : "No aircraft observations available within this radius."}</p>}
-        </section>
-        {selectedIcao24 && <section className="selected-flight section-panel" aria-label="Selected aircraft">
-          <div className="panel-heading"><div><p className="eyebrow">Selected aircraft</p><h2>{selectedObservation?.registration ?? selectedObservation?.callsign ?? selectedLabel}</h2></div><button type="button" className="ghost-button" onClick={() => setSelectedIcao24(null)}>Clear selection</button></div>
-          <dl className="flight-facts"><div><dt>ICAO24</dt><dd>{selectedLabel}</dd></div><div><dt>Altitude</dt><dd>{selectedObservation?.altitudeFt == null ? "Unknown" : `${Math.round(selectedObservation.altitudeFt).toLocaleString()} ft ${selectedObservation.altitudeSource ?? ""}`}</dd></div><div><dt>Ground speed</dt><dd>{selectedObservation?.groundSpeedKt == null ? "Unknown" : `${Math.round(selectedObservation.groundSpeedKt)} kt`}</dd></div><div><dt>Track direction</dt><dd>{selectedObservation?.trackDeg == null ? "Unknown" : `${Math.round(selectedObservation.trackDeg)}°`}</dd></div></dl>
-        </section>}
-
-        {profile.isFetching ? <p className="track-empty" role="status">Building the selected aircraft's sourced profile...</p> : profile.error instanceof ProviderNotConfiguredError ? selectedIcao24 && <p className="track-empty">Aircraft profile gateway and FAA registry snapshot configuration are required. No profile facts are fabricated.</p> : profile.error instanceof AuthenticationRequiredError ? <p className="track-empty">Authenticated profile access is required.</p> : profile.isError ? <p className="track-error" role="alert">Aircraft profile unavailable: {profile.error.message}</p> : profile.data ? <AircraftProfilePanel profile={profile.data} /> : null}
-
-        <section className="analytics-grid" id="analytics">
-          {track.isFetching ? <p className="track-empty" role="status">Loading the selected aircraft's recorded observations...</p> : track.error instanceof ProviderNotConfiguredError ? null : track.isError ? <p className="track-error" role="alert">Track unavailable: {track.error.message}</p> : track.data?.points.length === 0 ? <p className="track-empty">No observations were recorded for this aircraft in the selected 24-hour window.</p> : track.data ? <ReplayPanel points={track.data.points} aircraftLabel={track.data.aircraft.registration ?? track.data.aircraft.icao24} index={replayIndex} onIndexChange={setReplayIndex} /> : null}
-          {insights.isFetching ? <p className="track-empty" role="status">Computing track insights...</p> : insights.error instanceof ProviderNotConfiguredError ? null : insights.isError ? <p className="track-error" role="alert">Insights unavailable: {insights.error.message}</p> : insights.data ? (
-            <section className="replay" aria-labelledby="insights-heading">
-              <div className="replay-title"><div><p className="eyebrow">Track insights</p><h3 id="insights-heading">24-hour summary | {insights.data.aircraft.registration ?? insights.data.aircraft.icao24}</h3></div><span>{insights.data.summary.pointCount} points</span></div>
-              <dl className="replay-facts">
-                <div><dt>Sources</dt><dd>{insights.data.summary.sourceCount}</dd></div>
-                <div><dt>Altitude range</dt><dd>{insights.data.summary.altitudeFt.min == null ? "Unknown" : `${Math.round(insights.data.summary.altitudeFt.min).toLocaleString()}-${Math.round(insights.data.summary.altitudeFt.max ?? insights.data.summary.altitudeFt.min).toLocaleString()} ft`}</dd></div>
-                <div><dt>Average speed</dt><dd>{insights.data.summary.groundSpeedKt.average == null ? "Unknown" : `${Math.round(insights.data.summary.groundSpeedKt.average)} kt`}</dd></div>
-              </dl>
-            </section>
-          ) : null}
-          {routeSummary.isFetching ? <p className="track-empty" role="status">Computing route summary...</p> : routeSummary.error instanceof ProviderNotConfiguredError ? null : routeSummary.isError ? <p className="track-error" role="alert">Route summary unavailable: {routeSummary.error.message}</p> : routeSummary.data ? (
-            <section className="replay" aria-labelledby="route-summary-heading">
-              <div className="replay-title"><div><p className="eyebrow">Route analytics</p><h3 id="route-summary-heading">Path summary | {routeSummary.data.aircraft.registration ?? routeSummary.data.aircraft.icao24}</h3></div><span>{routeSummary.data.summary.loiteringDetected ? "Loitering" : "Transit"}</span></div>
-              <dl className="replay-facts">
-                <div><dt>Duration</dt><dd>{Math.round(routeSummary.data.summary.durationMinutes)} min</dd></div>
-                <div><dt>Distance</dt><dd>{routeSummary.data.summary.totalDistanceNm.toFixed(1)} NM</dd></div>
-                <div><dt>Loitering</dt><dd>{routeSummary.data.summary.loiteringDetected ? `${Math.round(routeSummary.data.summary.loiteringMinutes)} min` : "None"}</dd></div>
-              </dl>
-            </section>
-          ) : null}
-        </section>
-        <section className="search-end section-panel" id="history-search-panel">          <form className="history-search" onSubmit={(event) => { event.preventDefault(); setSubmittedSearch(searchInput.trim()); setSelectedIcao24(null); goToSection("history-search-panel"); }}>
-            <label htmlFor="history-search">Search recorded aircraft</label>
-            <div><input id="history-search" value={searchInput} minLength={2} maxLength={24} pattern="[A-Za-z0-9\-]+" placeholder="Registration or ICAO24" onChange={(event) => setSearchInput(event.currentTarget.value)} /><button type="submit">Search history</button></div>
-          </form>        {submittedSearch && (
-          <section className="search-results section-panel" id="history-results" aria-live="polite">
-            {search.error instanceof ProviderNotConfiguredError ? <p>History gateway configuration required. No recorded aircraft are fabricated.</p> : search.error instanceof AuthenticationRequiredError ? <p>Authenticated access is required before precise aircraft history can be searched.</p> : search.isError ? <p role="alert">{search.error.message}</p> : search.isFetching ? <p>Searching recorded observations...</p> : search.data?.aircraft.length === 0 ? <p>No matching aircraft have been recorded.</p> : <ul>{search.data?.aircraft.map((item) => <li key={item.id}><button type="button" aria-pressed={selectedIcao24 === item.icao24} onClick={() => { setSelectedIcao24(item.icao24); setReplayIndex(0); goToSection("analytics"); }}><strong>{item.registration ?? item.icao24}</strong><span>{item.icao24} | last observed UTC {new Date(item.lastSeenAt).toISOString()}</span></button></li>)}</ul>}
-          </section>
-        )}
-</section>
-        <details className="evidence-end"><summary>Add supporting evidence</summary><EvidenceUploadPanel /></details>
+        <div className="content-region">
+          {(view === "map" || view === "aircraft") && (
+            <div className={view === "map" ? "desktop-only" : undefined}>
+              <AircraftList rows={radiusRows} selectedIcao24={selectedIcao24} onSelect={selectAircraft} radiusMi={radiusMi} loading={aircraft.isPending || (signedIn && nearby.isPending)} liveError={liveError} recordedNote={recordedNote} />
+            </div>
+          )}
+          {view === "netted" && <NettedPanel state={nettedState} radiusMi={radiusMi} selectedIcao24={selectedIcao24} onSelect={selectAircraft} onSignIn={() => setAuthPrompt((value) => value + 1)} />}
+          {view === "history" && (
+            <div className="stack-lg">
+              <section className="panel" aria-labelledby="search-heading">
+                <header className="panel-header"><div><p className="eyebrow">Recorded aircraft</p><h2 id="search-heading">Search history</h2></div></header>
+                <form className="search-form" role="search" onSubmit={(event) => { event.preventDefault(); setSubmittedSearch(searchInput.trim()); }}>
+                  <label htmlFor="history-search" className="sr-only">Registration, ICAO24 or call sign</label>
+                  <input id="history-search" type="search" inputMode="search" autoCapitalize="characters" autoCorrect="off" spellCheck={false} enterKeyHint="search" value={searchInput} minLength={2} maxLength={24} pattern="[A-Za-z0-9\-]+" placeholder="N123AB, a1b2c3 or SWA123" onChange={(event) => setSearchInput(event.currentTarget.value)} />
+                  <button type="submit" className="button button-primary">Search</button>
+                </form>
+                {submittedSearch && (
+                  <div aria-live="polite" className="search-results">
+                    {search.error instanceof ProviderNotConfiguredError ? <p className="notice notice-warn">Recorded history is not configured. No recorded aircraft are fabricated.</p>
+                      : search.error instanceof AuthenticationRequiredError ? <p className="notice notice-warn">Sign in to search recorded aircraft.</p>
+                        : search.error instanceof AccessDeniedError ? <p className="notice notice-warn">Your account needs the history access grant to search.</p>
+                          : search.isError ? <p className="notice notice-error" role="alert">{search.error.message}</p>
+                            : search.isFetching ? <p className="notice"><span className="spinner" aria-hidden="true" /> Searching recorded observations…</p>
+                              : search.data?.aircraft.length === 0 ? <p className="empty-inline">No matching aircraft have been recorded.</p>
+                                : <ul className="result-list">{search.data?.aircraft.map((item) => <li key={item.id}><button type="button" className="result-item" aria-pressed={selectedIcao24 === item.icao24} onClick={() => selectAircraft(item.icao24)}><strong className="mono">{item.registration ?? item.icao24.toUpperCase()}</strong><span>{item.icao24.toUpperCase()} · last seen {new Date(item.lastSeenAt).toLocaleString()}</span></button></li>)}</ul>}
+                  </div>
+                )}
+              </section>
+              {!selectedIcao24 ? <p className="empty-inline">Select an aircraft from the map, the Aircraft list, Netted or a search result to see its replay and profile.</p> : (
+                <>
+                  {track.isFetching ? <p className="notice"><span className="spinner" aria-hidden="true" /> Loading recorded observations…</p>
+                    : track.error instanceof AuthenticationRequiredError ? <p className="notice notice-warn">Sign in to replay recorded tracks.</p>
+                      : track.error instanceof AccessDeniedError ? <p className="notice notice-warn">Replay needs the history access grant.</p>
+                        : track.error instanceof ProviderNotConfiguredError ? null
+                          : track.isError ? <p className="notice notice-error" role="alert">Track unavailable: {track.error.message}</p>
+                            : track.data?.points.length === 0 ? <p className="empty-inline">No observations were recorded for this aircraft in the last 24 hours.</p>
+                              : track.data ? <ReplayPanel points={track.data.points} aircraftLabel={track.data.aircraft.registration ?? track.data.aircraft.icao24} index={replayIndex} onIndexChange={setReplayIndex} /> : null}
+                  {insights.data && (
+                    <section className="replay" aria-labelledby="insights-heading">
+                      <div className="replay-title"><div><p className="eyebrow">Track insights</p><h3 id="insights-heading">Last 24 hours</h3></div><span>{insights.data.summary.pointCount} points</span></div>
+                      <dl className="replay-facts">
+                        <div><dt>Sources</dt><dd>{insights.data.summary.sourceCount}</dd></div>
+                        <div><dt>Altitude range</dt><dd>{insights.data.summary.altitudeFt.min == null ? "Unknown" : `${Math.round(insights.data.summary.altitudeFt.min).toLocaleString()}–${Math.round(insights.data.summary.altitudeFt.max ?? insights.data.summary.altitudeFt.min).toLocaleString()} ft`}</dd></div>
+                        <div><dt>Average speed</dt><dd>{insights.data.summary.groundSpeedKt.average == null ? "Unknown" : `${Math.round(knotsToMph(insights.data.summary.groundSpeedKt.average))} mph`}</dd></div>
+                      </dl>
+                    </section>
+                  )}
+                  {routeSummary.data && (
+                    <section className="replay" aria-labelledby="route-summary-heading">
+                      <div className="replay-title"><div><p className="eyebrow">Route analytics</p><h3 id="route-summary-heading">Path summary</h3></div><span>{routeSummary.data.summary.loiteringDetected ? "Loitering" : "Transit"}</span></div>
+                      <dl className="replay-facts">
+                        <div><dt>Duration</dt><dd>{Math.round(routeSummary.data.summary.durationMinutes)} min</dd></div>
+                        <div><dt>Distance</dt><dd>{nmToMiles(routeSummary.data.summary.totalDistanceNm).toFixed(1)} mi</dd></div>
+                        <div><dt>Loitering</dt><dd>{routeSummary.data.summary.loiteringDetected ? `${Math.round(routeSummary.data.summary.loiteringMinutes)} min` : "None"}</dd></div>
+                      </dl>
+                    </section>
+                  )}
+                  {profile.isFetching ? <p className="notice"><span className="spinner" aria-hidden="true" /> Building the sourced profile…</p>
+                    : profile.error instanceof AccessDeniedError ? <p className="notice notice-warn">Aircraft profiles need the profile access grant.</p>
+                      : profile.error instanceof AuthenticationRequiredError ? <p className="notice notice-warn">Sign in to see aircraft profiles.</p>
+                        : profile.error instanceof ProviderNotConfiguredError ? <p className="notice notice-warn">Aircraft profiles are not configured. No profile facts are fabricated.</p>
+                          : profile.isError ? <p className="notice notice-error" role="alert">Aircraft profile unavailable: {profile.error.message}</p>
+                            : profile.data ? <AircraftProfilePanel profile={profile.data} /> : null}
+                </>
+              )}
+            </div>
+          )}
+          {view === "more" && (
+            <div className="stack-lg">
+              <LocationPanel area={area} onChange={updateArea} />
+              <section className="panel" aria-labelledby="account-heading">
+                <header className="panel-header"><div><p className="eyebrow">Neon Auth</p><h2 id="account-heading">Account</h2></div></header>
+                {signedIn ? <AccountSummary /> : <AuthForm />}
+              </section>
+              <section className="panel" aria-labelledby="map-settings-heading">
+                <header className="panel-header"><div><p className="eyebrow">Basemap</p><h2 id="map-settings-heading">Map settings</h2></div></header>
+                <p className="muted">Connect a public Mapbox token and choose a style. Stored only on this device.</p>
+                <button type="button" className="button button-ghost" onClick={() => setMapSettingsOpen(true)}>Open map settings</button>
+              </section>
+              <details className="panel evidence-details"><summary>Add supporting evidence</summary><EvidenceUploadPanel /></details>
+              <p className="fine-print about">Times are shown in your device's time zone; data is stored in UTC. Distances in statute miles, altitude in feet, speed in mph (converted from ground speed in knots). Live data: adsb.lol (ODbL).</p>
+            </div>
+          )}
+        </div>
       </main>
-      <footer><span>UTC-first | Provider-neutral | Evidence standard enforced</span><span>ADS-B observations · Flight data in UTC</span></footer>
+
+      {selectedIcao24 && view !== "history" && view !== "more" && (
+        <SelectedDock
+          icao24={selectedIcao24}
+          row={selectedRow}
+          netted={selectedNetted}
+          onClose={() => setSelectedIcao24(null)}
+          onShowMap={view === "map" ? undefined : () => go("map")}
+          onDetails={() => go("history")}
+        />
+      )}
     </div>
   );
 }
