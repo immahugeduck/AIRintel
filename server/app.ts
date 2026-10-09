@@ -18,13 +18,15 @@ export type AppDependencies = {
   adsb: AdsbProviderConfig | null;
   historyRateLimit?: number;
   profileRateLimit?: number;
+  /** Per-user live-recording writes per minute (signed-in users with the history grant). */
+  recordingRateLimit?: number;
 };
 
 /**
  * One portable Fetch-API app that replaces the five Supabase Edge Functions.
  *   GET /health               liveness (no origin check)
- *   GET /aircraft-nearby      live ADS-B gateway (provider-gated)
- *   GET /history              search / track / insights / route-summary / nearby   (JWT + "history" grant)
+ *   GET /aircraft-nearby      live ADS-B gateway (provider-gated); records to the flight recorder for JWT + "history" callers
+ *   GET /history              search / track / insights / route-summary / nearby / netted   (JWT + "history" grant)
  *   GET /aircraft-profile     FAA-registry-backed profile                          (JWT + "profile" grant)
  *   GET /satellites-nearby    CelesTrak/SGP4 positions
  *   GET /satellite-passes     CelesTrak/SGP4 pass prediction
@@ -38,7 +40,8 @@ export function createApp(deps: AppDependencies) {
   app.get("/health", (c) => c.json({ ok: true, database: deps.db !== null, auth: deps.verifier !== null }));
 
   app.use("/aircraft-nearby", guard);
-  app.route("/aircraft-nearby", aircraftRoutes({ adsb: deps.adsb }));
+  const recordingLimiter = new RateLimiter(deps.recordingRateLimit ?? 12);
+  app.route("/aircraft-nearby", aircraftRoutes({ adsb: deps.adsb, recording: { db: deps.db, verifier: deps.verifier, limiter: recordingLimiter } }));
 
   app.use("/satellites-nearby", guard);
   app.route("/satellites-nearby", satellitesNearbyRoutes());
