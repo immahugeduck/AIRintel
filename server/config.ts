@@ -72,6 +72,18 @@ function resolveNeonAuth(env: Env): { baseUrl: string | undefined; jwksUrl: stri
 }
 
 /**
+ * Database URL. Access grants are keyed by the Neon Auth user id, so the database must be the one that hosts
+ * that Neon Auth instance. When sign-in comes from the SERVERSIDE_NEON_ connection (plain NEON_AUTH_BASE_URL unset)
+ * and that connection also provides a database URL, use it; otherwise fall back to the plain DATABASE_URL.
+ */
+function resolveDatabaseUrl(env: Env): string | undefined {
+  const prefixedDb = nonEmpty(env[`${VERCEL_NEON_ENV_PREFIX}DATABASE_URL`]);
+  const authIsPrefixed = !nonEmpty(env.NEON_AUTH_BASE_URL) && Boolean(nonEmpty(env[`${VERCEL_NEON_ENV_PREFIX}NEON_AUTH_BASE_URL`]));
+  if (authIsPrefixed && prefixedDb) return prefixedDb;
+  return nonEmpty(env.DATABASE_URL) ?? prefixedDb;
+}
+
+/**
  * Reads server configuration from the environment.
  * On Neon Functions DATABASE_URL, NEON_AUTH_BASE_URL and NEON_AUTH_JWKS_URL are injected automatically.
  * On Vercel the Neon integration injects SERVERSIDE_NEON_NEON_AUTH_BASE_URL, which is used when the plain name is unset.
@@ -118,7 +130,7 @@ export function readConfig(env: Env = process.env): ServerConfig {
     retentionDays,
   };
 
-  const databaseUrl = env.DATABASE_URL || undefined;
+  const databaseUrl = resolveDatabaseUrl(env);
   if (!databaseUrl) issues.push({ level: "warning", variable: "DATABASE_URL", message: "DATABASE_URL is not set: history, the netted log, the net and evidence uploads answer 503 until it is configured." });
   if (!neonAuth.baseUrl) issues.push({ level: "warning", variable: "NEON_AUTH_BASE_URL", message: "NEON_AUTH_BASE_URL is not set: signed-in routes answer 503 until Neon Auth is configured." });
   if (env.VERCEL && env.ALLOWED_ORIGINS === undefined && allowedOrigins.size === 0) issues.push({ level: "warning", variable: "ALLOWED_ORIGINS", message: "ALLOWED_ORIGINS is empty and no Vercel URL variables were found; only same-origin browser calls will be accepted." });
