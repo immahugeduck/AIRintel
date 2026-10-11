@@ -1,3 +1,4 @@
+import { errorFields, log } from "../logger.js";
 import { get, put } from "@vercel/blob";
 import { Hono } from "hono";
 import type { AppVariables } from "../http.js";
@@ -68,7 +69,7 @@ export function evidenceRoutes() {
         access,
       }, 201);
     } catch (error) {
-      console.error("Vercel Blob upload failed", error);
+      log("error", "evidence_upload_failed", errorFields(error));
       return c.json({ error: "blob_upload_failed" }, 502);
     }
   });
@@ -95,7 +96,7 @@ export function evidenceRoutes() {
         },
       });
     } catch (error) {
-      console.error("Vercel Blob read failed", error);
+      log("error", "evidence_read_failed", errorFields(error));
       return c.json({ error: "blob_read_failed" }, 502);
     }
   });

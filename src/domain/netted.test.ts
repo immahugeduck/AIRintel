@@ -68,3 +68,35 @@ describe("nettedQuerySchema", () => {
     expect(nettedQuerySchema.safeParse(input).success).toBe(false);
   });
 });
+
+describe("visits list (netted-visits-v1)", () => {
+  it("exposes each entry with entered / last-seen-in-radius / closest approach, chronologically", () => {
+    const [summary] = run([obs("abc123", 0, 2), obs("abc123", 1, 1), obs("abc123", 2, 9), obs("abc123", 30, 3), obs("abc123", 31, 5)]);
+    expect(summary!.visits).toEqual([
+      { enteredAt: t(0), lastSeenInRadiusAt: t(1), closestApproachNm: expect.closeTo(1, 2), observationCount: 2 },
+      { enteredAt: t(30), lastSeenInRadiusAt: t(31), closestApproachNm: expect.closeTo(3, 2), observationCount: 2 },
+    ]);
+    expect(summary!.visits).toHaveLength(summary!.visitCount);
+  });
+
+  it("does not double count when the live view and the sweep both wrote the same pass (duplicate / near-duplicate rows)", () => {
+    const base = [obs("abc123", 0, 10), obs("abc123", 1, 4), obs("abc123", 2, 1), obs("abc123", 3, 5), obs("abc123", 4, 11)];
+    // The same pass recorded again by a second writer: identical rows plus rows 40 ms apart (different provider record ids).
+    const skew = (item: VisitObservation) => ({ ...item, observedAt: new Date(Date.parse(item.observedAt) + 40).toISOString() });
+    const twice = [...base, ...base, ...base.map(skew)];
+    const [single] = run(base);
+    const [doubled] = run(twice);
+    expect(doubled!.visitCount).toBe(1);
+    expect(doubled!.visitCount).toBe(single!.visitCount);
+    expect(doubled!.visits).toHaveLength(1);
+    expect(doubled!.closestApproachNm).toBeCloseTo(single!.closestApproachNm, 6);
+  });
+
+  it("reception gaps beyond 10 minutes give separate entries whether or not outside samples exist in between", () => {
+    // Inside at 0, no data, inside at 15 (gap rule => new visit); with outside samples between, still 2 visits.
+    const sparse = run([obs("abc123", 0, 2), obs("abc123", 15, 2)])[0]!;
+    const dense = run([obs("abc123", 0, 2), obs("abc123", 5, 9), obs("abc123", 10, 9), obs("abc123", 15, 2)])[0]!;
+    expect(sparse.visitCount).toBe(2);
+    expect(dense.visitCount).toBe(2);
+  });
+});
