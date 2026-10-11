@@ -1,0 +1,43 @@
+# Always-on net trigger: calls the deployed sweep endpoint so aircraft entering your radius are logged while the app is closed.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   AIRINTEL_SWEEP_URL  full URL, e.g. https://<your-domain>/api/net/sweep
+#   CRON_SECRET         the same value as the CRON_SECRET environment variable on Vercel
+#
+# GitHub's scheduler is best-effort: the minimum interval is 5 minutes, runs can be delayed under load, and scheduled
+# workflows pause after 60 days without repository activity (re-enable in the Actions tab). For 1-minute sweeps use the
+# Vercel Pro cron or an external pinger - see docs/netted-aircraft.md.
+name: Net sweep
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: net-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Call the sweep endpoint
+        env:
+          SWEEP_URL: ${{ secrets.AIRINTEL_SWEEP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SWEEP_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::Set the AIRINTEL_SWEEP_URL and CRON_SECRET repository secrets (see docs/netted-aircraft.md)."
+            exit 1
+          fi
+          case "$SWEEP_URL" in https://*) ;; *) echo "::error::AIRINTEL_SWEEP_URL must start with https://"; exit 1;; esac
+          # --fail-with-body: any non-2xx (401 bad secret, 502 provider down, 503 not configured) fails this job.
+          # The Authorization header is read from stdin so the secret never appears in the process list or logs.
+          printf 'header = "Authorization: Bearer %s"\n' "$CRON_SECRET" | curl --silent --show-error --fail-with-body \
+            --max-time 45 --retry 2 --retry-delay 5 --retry-connrefused \
+            --config - -X POST -H "Accept: application/json" "$SWEEP_URL"
+          echo

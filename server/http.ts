@@ -17,7 +17,7 @@ export const originGuardForMethods = (allowedOrigins: ReadonlySet<string>, metho
   if (!sameOrigin && !allowedOrigins.has(origin)) return c.json({ error: "origin_not_allowed" }, 403, baseHeaders);
   c.set("origin", origin);
   const allowMethods = [...new Set([...methods.map((method) => method.toUpperCase()), "OPTIONS"])];
-  const cors = { ...baseHeaders, ...(origin ? { "Access-Control-Allow-Origin": origin } : {}), "Access-Control-Allow-Methods": allowMethods.join(", "), "Access-Control-Allow-Headers": "Authorization, Content-Type" };
+  const cors = { ...baseHeaders, ...(origin && allowedOrigins.has(origin) ? { "Access-Control-Allow-Origin": origin } : {}), "Access-Control-Allow-Methods": allowMethods.join(", "), "Access-Control-Allow-Headers": "Authorization, Content-Type" };
   if (c.req.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
   if (!allowMethods.includes(c.req.method.toUpperCase())) return c.json({ error: "method_not_allowed" }, 405, cors);
   for (const [name, value] of Object.entries(cors)) c.header(name, value);

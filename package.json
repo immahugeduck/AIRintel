@@ -14,7 +14,9 @@
     "db:migrate": "node scripts/migrate.mjs",
     "access:grant": "node scripts/access.mjs grant",
     "access:revoke": "node scripts/access.mjs revoke",
-    "access:list": "node scripts/access.mjs list"
+    "access:list": "node scripts/access.mjs list",
+    "db:retention": "node scripts/retention.mjs",
+    "env:check": "tsx server/config-check.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.3",

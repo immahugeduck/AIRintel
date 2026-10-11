@@ -13,6 +13,7 @@ begin
     if exists (select 1 from pg_roles where rolname = browser_role) then
       execute format('revoke all on schema airintel_private from %I', browser_role);
       execute format('revoke all on all tables in schema airintel_private from %I', browser_role);
+      execute format('revoke execute on all functions in schema airintel_private from %I', browser_role);
       execute format('revoke all on all tables in schema public from %I', browser_role);
       execute format('revoke all on all sequences in schema public from %I', browser_role);
       execute format('revoke execute on all functions in schema public from %I', browser_role);

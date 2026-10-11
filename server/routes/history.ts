@@ -1,10 +1,13 @@
+import { errorFields, log } from "../logger.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { distanceNm } from "../../src/domain/geometry.js";
+import { watchAreaInputSchema } from "../../src/domain/net.js";
 import { NETTED_ALGORITHM_VERSION, countRadiusVisits, nettedQuerySchema, toNettedDto, type VisitObservation } from "../../src/domain/netted.js";
 import { VISIT_GAP_MINUTES, milesToMeters, milesToNm } from "../../src/domain/units.js";
 import { iso, type Queryable } from "../db.js";
 import type { AppVariables } from "../http.js";
+import { getWatchAreaRow, toNetStatus, upsertWatchArea, watchAreaResponse } from "../net-watch.js";
 
 const searchSchema = z.string().trim().min(2).max(24).regex(/^[a-zA-Z0-9-]+$/);
 const icaoSchema = z.string().trim().toLowerCase().regex(/^[0-9a-f]{6}$/);
@@ -33,10 +36,18 @@ export function historyRoutes(db: Queryable) {
       if (action === "nearby") return await nearby(c.req.query("lat"), c.req.query("lon"), c.req.query("radiusNm"), clampHours(c.req.query("hours"), 72));
       if (action === "track") return await track(c.req.query("icao24"), clampHours(c.req.query("hours"), 24));
       if (action === "netted") return await netted();
+      if (action === "watch-area") return await getWatchArea();
       return c.json({ error: "invalid_action" }, 400);
     } catch (error) {
-      console.error("[history] query failed:", error instanceof Error ? error.message : error);
-      return c.json({ error: "history_query_failed" }, 500);
+      log("error", "history_query_failed", { action: action ?? null, ...errorFields(error) });
+      const missing = action === "watch-area" && error && typeof error === "object" && (error as { code?: unknown }).code === "42P01";
+      return c.json({ error: missing ? "net_not_migrated" : "history_query_failed" }, missing ? 503 : 500);
+    }
+
+    /** The caller's server-side watch area (the always-on net) and its freshness. Never exposes other users' areas. */
+    async function getWatchArea() {
+      const row = await getWatchAreaRow(db, c.get("user").id);
+      return c.json(watchAreaResponse(row));
     }
 
     async function search(raw: string | undefined) {
@@ -218,6 +229,8 @@ export function historyRoutes(db: Queryable) {
         );
         for (const row of types.rows) if (row.type_code) typeCodes.set(row.icao24, row.type_code);
       }
+      // Freshness of the always-on net for this user; null when the net tables are not migrated yet (never fatal).
+      const net = await getWatchAreaRow(db, c.get("user").id).then((row) => toNetStatus(row), () => null);
       return c.json({
         query: { latitude: lat, longitude: lon, radiusMi, radiusNm, hours, visitGapMinutes: VISIT_GAP_MINUTES },
         windowStart: windowStart.toISOString(),
@@ -226,6 +239,7 @@ export function historyRoutes(db: Queryable) {
         algorithmVersion: NETTED_ALGORITHM_VERSION,
         truncated,
         aircraft: summaries.map((summary) => toNettedDto(summary, typeCodes.get(summary.icao24) ?? null)),
+        net,
       });
     }
 
@@ -269,6 +283,26 @@ export function historyRoutes(db: Queryable) {
         receivedAt: new Date().toISOString(),
         coverage: { returnedPoints: points.length, truncated, sources: [...new Set(points.map((point) => point.provider))] },
       });
+    }
+  });
+
+  /** Save / enable / pause the always-on net for the signed-in user (history grant already enforced upstream). */
+  app.put("/", async (c) => {
+    if (c.req.query("action") !== "watch-area") return c.json({ error: "invalid_action" }, 400);
+    const text = await c.req.text().catch(() => "");
+    if (text.length === 0 || text.length > 2_000) return c.json({ error: "invalid_watch_area" }, 400);
+    let body: unknown;
+    try { body = JSON.parse(text); } catch { return c.json({ error: "invalid_watch_area" }, 400); }
+    const parsed = watchAreaInputSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_watch_area" }, 400);
+    try {
+      const row = await upsertWatchArea(db, c.get("user").id, parsed.data);
+      log("info", "net_watch_area_saved", { enabled: parsed.data.enabled, radiusMi: parsed.data.radiusMi });
+      return c.json(watchAreaResponse(row));
+    } catch (error) {
+      log("error", "net_watch_area_save_failed", errorFields(error));
+      const missing = error && typeof error === "object" && (error as { code?: unknown }).code === "42P01";
+      return c.json({ error: missing ? "net_not_migrated" : "history_query_failed" }, missing ? 503 : 500);
     }
   });
 

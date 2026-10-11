@@ -109,3 +109,30 @@ describe("fetchLiveAircraft", () => {
     ).rejects.toMatchObject({ code: "provider_adapter_not_implemented" });
   });
 });
+
+describe("fetchLiveAircraft resilience (stubbed transport)", () => {
+  const config = { provider: "adsb_lol", baseUrl: "https://provider.test" };
+  const body = JSON.stringify({ now: 1_800_000_000_000, ac: [{ hex: "abc123", lat: 1, lon: 1, seen_pos: 0 }] });
+  const query = { lat: 1, lon: 1, radiusNm: 5 };
+  const sleep = vi.fn(async () => undefined);
+
+  it("retries a transient 5xx once with backoff and then succeeds", async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(new Response("bad", { status: 502 })).mockResolvedValueOnce(new Response(body, { status: 200 }));
+    const result = await fetchLiveAircraft(config, query, fetchImpl as never, { sleep });
+    expect(result.observations).toHaveLength(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a non-transient 4xx", async () => {
+    const fetchImpl = vi.fn(async () => new Response("no", { status: 404 }));
+    await expect(fetchLiveAircraft(config, query, fetchImpl as never, { sleep })).rejects.toMatchObject({ code: "adsb_lol_upstream_404" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries network errors, then gives up with a coded error", async () => {
+    const fetchImpl = vi.fn(async () => { throw new TypeError("fetch failed"); });
+    await expect(fetchLiveAircraft(config, query, fetchImpl as never, { sleep, retries: 2 })).rejects.toMatchObject({ code: "adsb_lol_network_error" });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+});

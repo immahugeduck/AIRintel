@@ -171,10 +171,25 @@ export function normalizeAdsbLolAircraft(raw: unknown, receivedAtMs: number, pro
   };
 }
 
+export type ProviderFetchOptions = {
+  /** Per-attempt timeout (default 12 s). */
+  timeoutMs?: number;
+  /** Extra attempts after a transient failure (network error, 429, 5xx). Default 1. */
+  retries?: number;
+  /** Backoff base in ms; attempt n waits base * 2^n (+ jitter), capped. Default 300. */
+  backoffMs?: number;
+  /** Injectable for tests. */
+  sleep?: (ms: number) => Promise<void>;
+};
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const isTransientStatus = (status: number) => status === 408 || status === 425 || status === 429 || status >= 500;
+
 export async function fetchAdsbLolNearby(
   config: AdsbProviderConfig,
   query: { lat: number; lon: number; radiusNm: number },
   fetchImpl: typeof fetch = fetch,
+  options: ProviderFetchOptions = {},
 ): Promise<LiveAircraftResult> {
   const radiusNm = Math.min(250, Math.max(1, query.radiusNm));
   const url = new URL(`${config.baseUrl}/v2/lat/${query.lat}/lon/${query.lon}/dist/${radiusNm}`);
@@ -185,8 +200,27 @@ export async function fetchAdsbLolNearby(
   };
   if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
 
-  const response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(12_000) });
-  if (!response.ok) throw new Error(`adsb_lol_upstream_${response.status}`);
+  const retries = Math.max(0, options.retries ?? 1);
+  const sleep = options.sleep ?? defaultSleep;
+  let response: Response | null = null;
+  for (let attempt = 0; ; attempt += 1) {
+    let failure: Error | null = null;
+    try {
+      response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(options.timeoutMs ?? 12_000) });
+      if (response.ok) break;
+      failure = Object.assign(new Error(`adsb_lol_upstream_${response.status}`), { code: `adsb_lol_upstream_${response.status}` });
+      if (!isTransientStatus(response.status)) throw failure;
+    } catch (error) {
+      if (failure && error === failure) throw failure; // non-transient HTTP status: do not retry
+      failure = error instanceof Error ? error : new Error("adsb_lol_network_error");
+      if (!(failure as { code?: unknown }).code) (failure as { code?: string }).code = "adsb_lol_network_error";
+    }
+    if (attempt >= retries) throw failure;
+    const retryAfter = Number(response?.headers.get("retry-after"));
+    const backoff = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(2_000, retryAfter * 1000) : Math.min(2_000, (options.backoffMs ?? 300) * 2 ** attempt + Math.floor(Math.random() * 100));
+    await sleep(backoff);
+  }
+  if (!response) throw new Error("adsb_lol_network_error");
 
   const payload = adsbLolResponseSchema.parse(await response.json());
   const receivedAtMs = Date.now();
@@ -213,8 +247,9 @@ export async function fetchLiveAircraft(
   config: AdsbProviderConfig,
   query: { lat: number; lon: number; radiusNm: number },
   fetchImpl: typeof fetch = fetch,
+  options: ProviderFetchOptions = {},
 ): Promise<LiveAircraftResult> {
-  if (config.provider === "adsb_lol") return fetchAdsbLolNearby(config, query, fetchImpl);
+  if (config.provider === "adsb_lol") return fetchAdsbLolNearby(config, query, fetchImpl, options);
   // Other provider identities require a dedicated adapter after docs/provider-onboarding.md is completed.
   throw Object.assign(new Error("provider_adapter_not_implemented"), { code: "provider_adapter_not_implemented" as const });
 }

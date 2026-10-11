@@ -1,3 +1,4 @@
+import { errorFields, log } from "../logger.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import { iso, type Queryable } from "../db.js";
@@ -121,7 +122,7 @@ export function profileRoutes(db: Queryable) {
         receivedAt: new Date().toISOString(),
       });
     } catch (error) {
-      console.error("[profile] query failed:", error instanceof Error ? error.message : error);
+      log("error", "profile_query_failed", errorFields(error));
       return c.json({ error: "profile_query_failed" }, 500);
     }
   });

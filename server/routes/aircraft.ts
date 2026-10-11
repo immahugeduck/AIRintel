@@ -18,7 +18,7 @@ export function aircraftRoutes(options: { adsb: AdsbProviderConfig | null; recor
     if (!parsed.success) return c.json({ error: "invalid_spatial_query" }, 400);
     if (!options.adsb) return c.json({ error: "provider_not_configured" }, 503);
     try {
-      const result = await fetchLiveAircraft(options.adsb, parsed.data);
+      const result = await fetchLiveAircraft(options.adsb, parsed.data, fetch, { timeoutMs: 8_000, retries: 1 });
       // Signed-in users with the history grant contribute these real observations to the flight recorder.
       const recording = await recordLiveObservations(options.recording ?? null, c.req.header("authorization"), parsed.data.radiusNm, result);
       return c.json({ observations: result.observations, receivedAt: result.receivedAt, sources: result.sources, recording: recording.status });

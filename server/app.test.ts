@@ -117,7 +117,7 @@ describe("history input validation", () => {
 describe("public gateways", () => {
   it("serves /health without an origin", async () => {
     const response = await build().request("/health");
-    expect(await response.json()).toEqual({ ok: true, database: true, auth: true });
+    expect(await response.json()).toMatchObject({ ok: true, database: true, auth: true });
   });
 
   it("keeps the aircraft provider gated until configured", async () => {

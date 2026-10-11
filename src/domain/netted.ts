@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { distanceNm } from "./geometry.js";
+import { netStatusSchema } from "./net.js";
 import { MAX_WATCH_RADIUS_MI, MIN_WATCH_RADIUS_MI, VISIT_GAP_MINUTES, WATCH_RADIUS_MI, milesToNm, nmToMiles } from "./units.js";
 
 /**
@@ -26,6 +27,15 @@ export type VisitObservation = {
   registration?: string | null | undefined;
 };
 
+/** One visit (entry) into the radius: first observation inside, last observation inside before it ended, closest approach. */
+export type RadiusVisit = {
+  enteredAt: string;
+  lastSeenInRadiusAt: string;
+  closestApproachNm: number;
+  /** Observations recorded inside the radius during this visit (Observed). */
+  observationCount: number;
+};
+
 export type NettedAircraftSummary = {
   icao24: string;
   callsign: string | null;
@@ -34,6 +44,8 @@ export type NettedAircraftSummary = {
   firstSeenAt: string;
   lastSeenAt: string;
   closestApproachNm: number;
+  /** Every visit in chronological order (oldest first). visitCount === visits.length. */
+  visits: RadiusVisit[];
 };
 
 export type VisitOptions = { latitude: number; longitude: number; radiusNm: number; gapMinutes?: number };
@@ -61,10 +73,18 @@ export function countRadiusVisits(observations: readonly VisitObservation[], opt
       if (inside) {
         const startsVisit = previous === null || !previous.inside || time - previous.time > gapMs;
         if (!summary) {
-          summary = { icao24, callsign: null, registration: null, visitCount: 0, firstSeenAt: new Date(time).toISOString(), lastSeenAt: new Date(time).toISOString(), closestApproachNm: distance };
+          summary = { icao24, callsign: null, registration: null, visitCount: 0, firstSeenAt: new Date(time).toISOString(), lastSeenAt: new Date(time).toISOString(), closestApproachNm: distance, visits: [] };
         }
-        if (startsVisit) summary.visitCount += 1;
-        summary.lastSeenAt = new Date(time).toISOString();
+        const stamp = new Date(time).toISOString();
+        if (startsVisit) {
+          summary.visitCount += 1;
+          summary.visits.push({ enteredAt: stamp, lastSeenInRadiusAt: stamp, closestApproachNm: distance, observationCount: 0 });
+        }
+        const visit = summary.visits[summary.visits.length - 1]!;
+        visit.lastSeenInRadiusAt = stamp;
+        visit.closestApproachNm = Math.min(visit.closestApproachNm, distance);
+        visit.observationCount += 1;
+        summary.lastSeenAt = stamp;
         summary.closestApproachNm = Math.min(summary.closestApproachNm, distance);
         // Latest non-empty identity values observed inside the radius.
         if (observation.callsign?.trim()) summary.callsign = observation.callsign.trim();
@@ -87,6 +107,16 @@ export const nettedQuerySchema = z.object({
 export type NettedQuery = z.infer<typeof nettedQuerySchema>;
 
 const utc = z.iso.datetime({ offset: true });
+/** Newest visits returned per aircraft; `visitCount` always reports the total. */
+export const MAX_VISITS_PER_AIRCRAFT = 100;
+export const radiusVisitSchema = z.object({
+  enteredAt: utc,
+  lastSeenInRadiusAt: utc,
+  closestMi: z.number().finite().nonnegative(),
+  observationCount: z.number().int().positive(),
+});
+export type NettedVisit = z.infer<typeof radiusVisitSchema>;
+
 export const nettedAircraftSchema = z.object({
   icao24: z.string().regex(/^[0-9a-f]{6}$/),
   callsign: z.string().trim().min(1).nullable(),
@@ -97,6 +127,8 @@ export const nettedAircraftSchema = z.object({
   firstSeenAt: utc,
   lastSeenAt: utc,
   closestApproachMi: z.number().finite().nonnegative(),
+  /** Individual entries, newest first (at most MAX_VISITS_PER_AIRCRAFT). Older servers omit this; treated as empty. */
+  visits: z.array(radiusVisitSchema).default([]),
 });
 export type NettedAircraft = z.infer<typeof nettedAircraftSchema>;
 
@@ -115,6 +147,8 @@ export const nettedResponseSchema = z.object({
   algorithmVersion: z.string().min(1),
   truncated: z.boolean(),
   aircraft: z.array(nettedAircraftSchema),
+  /** Freshness of the always-on net for the caller; absent from older servers. */
+  net: netStatusSchema.nullish(),
 });
 export type NettedResponse = z.infer<typeof nettedResponseSchema>;
 
@@ -127,6 +161,13 @@ export const toNettedDto = (summary: NettedAircraftSummary, aircraftTypeCode: st
   firstSeenAt: summary.firstSeenAt,
   lastSeenAt: summary.lastSeenAt,
   closestApproachMi: nmToMiles(summary.closestApproachNm),
+  // Newest first, bounded; visitCount stays the full total.
+  visits: summary.visits.slice(-MAX_VISITS_PER_AIRCRAFT).reverse().map((visit) => ({
+    enteredAt: visit.enteredAt,
+    lastSeenInRadiusAt: visit.lastSeenInRadiusAt,
+    closestMi: nmToMiles(visit.closestApproachNm),
+    observationCount: visit.observationCount,
+  })),
 });
 
 export const radiusMiToNm = milesToNm;
