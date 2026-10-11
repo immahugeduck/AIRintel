@@ -32,6 +32,9 @@ Set for **Preview** and **Production** (add **Development** if you use `vercel d
 | `VITE_MAPBOX_ACCESS_TOKEN` | no (public `pk.` token) | Mapbox account → public default token. Without it the UI shows the Mapbox setup modal. |
 | `VITE_MAPBOX_STYLE` | no | `mapbox/streets-v12` |
 | `VITE_APP_NAME`, `VITE_DEFAULT_*`, `VITE_POLL_INTERVAL_SECONDS` | no | Optional; defaults exist in `.env.example`. |
+| `CRON_SECRET` | **yes (server-only)** | `openssl rand -hex 32` (≥ 24 chars). Required for the always-on net; the sweep endpoint answers 503 without it. Never a `VITE_` variable. |
+| `NET_SWEEP_MAX_AREAS`, `NET_SWEEP_MARGIN_FACTOR`, `NET_SWEEP_MIN_INTERVAL_SECONDS`, `NET_SWEEP_BUDGET_MS` | no | Optional sweep tuning, defaults in `.env.example`. |
+| `NET_RETENTION_DAYS` | no | Optional (≥ 7). Unset keeps all observations; recommended `90`. |
 | `DATABASE_URL_UNPOOLED` | yes | **Not needed on Vercel.** Only for running `db:migrate` / `access:*` from your own machine (put it in `.env.local`). |
 
 Every `VITE_*` value is baked in at build time: change one → redeploy.
@@ -47,7 +50,7 @@ Every `VITE_*` value is baked in at build time: change one → redeploy.
 
 ## 3. Migrations
 
-- [ ] `DATABASE_URL_UNPOOLED=<direct string> npm run db:migrate` (applies `db/migrations/0001-0004` and the repeatable role lockdown). Idempotent; re-run after every new migration. Migrations are **not** run by the Vercel build.
+- [ ] `DATABASE_URL_UNPOOLED=<direct string> npm run db:migrate` (applies `db/migrations/0001-0005` and the repeatable role lockdown). Idempotent; re-run after every new migration. Migrations are **not** run by the Vercel build.
 
 ## 4. Vercel project / build settings
 
@@ -78,14 +81,34 @@ Every `VITE_*` value is baked in at build time: change one → redeploy.
 
 ## 8. CI
 
-- [ ] `.github/workflows/ci.yml` – copy `docs/ci.example.yml` (typecheck, tests, build). The automation token cannot push workflow files; do this in the GitHub web UI or with a token that has the `workflow` scope.
+- [ ] `.github/workflows/ci.yml` runs typecheck, tests and build on every PR and push to `main` (node 22). Pushing workflow files needs a token with the `workflow` scope.
 - [ ] Optional: set repo secrets `TEST_DATABASE_URL`/`TEST_NEON_AUTH_BASE_URL` to run `server/neon.integration.test.ts` against a throw-away Neon branch.
 
-## 9. Domains
+## 9. Always-on net
+
+- [ ] `npm run db:migrate` (applies `0005_net_watch_areas.sql`).
+- [ ] Set `CRON_SECRET` on Vercel (Production + Preview) and redeploy. Check `GET /api/health` → `config` is `ok`.
+- [ ] GitHub → Settings → Secrets and variables → Actions: add `AIRINTEL_SWEEP_URL` (`https://<domain>/api/net/sweep`) and `CRON_SECRET` (same value). Run **Net sweep** manually once: it must succeed.
+- [ ] Optional, 1-minute sweeps on Vercel **Pro**: add `"crons": [{ "path": "/api/net/sweep", "schedule": "* * * * *" }]` to `vercel.json`. Do not add this on Hobby (deploy fails). Or point a free external pinger at the URL with the bearer header (see `docs/netted-aircraft.md`).
+- [ ] Optional: `NET_RETENTION_DAYS=90`.
+- [ ] In the app: sign in → More → turn on **Keep netting when app is closed** → the status reads "Net active" after the first sweep.
+
+## 10. Domains
 
 - [ ] Optional custom domain: Vercel → Settings → Domains. Then add it to Neon Auth trusted domains and `ALLOWED_ORIGINS`.
 
 ---
+
+## Production go-live checklist
+
+- [ ] `npm run typecheck`, `npm test`, `npm run build` pass (CI is green on `main`).
+- [ ] Migrations 0001–0005 applied (`npm run db:migrate`); `npm run access:list` shows your `history` + `profile` grants.
+- [ ] Env set on Vercel: `DATABASE_URL`, `NEON_AUTH_BASE_URL`, `ALLOWED_ORIGINS`, `VITE_NEON_AUTH_URL`, `VITE_MAPBOX_ACCESS_TOKEN`, `CRON_SECRET`, API URL vars; no secret in any `VITE_*` variable.
+- [ ] `GET /api/health` returns `ok` with database reachable and no config errors; after the first sweep `net.lastSweepAgeSeconds` is small.
+- [ ] Neon Auth trusted domains include the production domain; sign-in works on a phone (verify on the preview: the Neon Auth packages ship their own Zod copy, which the build now dedupes to the app's copy).
+- [ ] Response headers show the CSP, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`; the browser console shows no CSP violations on Map, Aircraft, Netted, History and More.
+- [ ] Net sweep verified (section 9) and a pass made while the app was closed shows in Netted.
+- [ ] Optional: install the PWA from the phone browser menu; revoke any tokens that were pasted into chats.
 
 ## Run log (2026-10-02)
 

@@ -111,6 +111,10 @@ Live aircraft remain blocked until the provider onboarding gate in `docs/provide
 Phase Two implementation details and deployment gates are documented in `docs/phase-two-flight-recorder.md`.
 
 
+## Always-on net
+
+AIRIntel logs every entry into your radius even when the app is closed: the app saves your watch area (More → **Keep netting when app is closed**) and a scheduled call to `/api/net/sweep` (GitHub Actions every 5 min by default, 1 min on Vercel Pro or an external pinger) fetches real aircraft and records them. Required: run migration `0005`, set `CRON_SECRET` (server-only), add the `AIRINTEL_SWEEP_URL` and `CRON_SECRET` GitHub secrets. Details, env variables and retention: [`docs/netted-aircraft.md`](docs/netted-aircraft.md). Pre-launch list: [`docs/deploy-checklist.md`](docs/deploy-checklist.md). `npm run env:check` validates your server environment.
+
 ## Deploying to Vercel
 
 See [`docs/deploy-checklist.md`](docs/deploy-checklist.md). The SPA and the API ship as one Vercel project: `vercel.json` builds the Vite app and rewrites `/api/*` to `api/index.ts` (the Hono app). Set `VITE_*_API_URL` to the relative paths `/api/history`, `/api/aircraft-profile` and `/api/aircraft-nearby`.
