@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { fetchAircraft } from "./api/aircraft";
 import { fetchNearbyAircraft, fetchNettedAircraft, fetchRecentTrack, fetchRouteSummary, fetchTrackInsights, searchAircraft } from "./api/history";
 import { fetchAircraftProfile } from "./api/profile";
@@ -8,9 +8,10 @@ import { AircraftProfilePanel } from "./components/AircraftProfilePanel";
 import { AccountSummary, AuthForm, AuthPanel } from "./components/AuthPanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { EvidenceUploadPanel } from "./components/EvidenceUploadPanel";
-import { BrandMark, HistoryIcon, ListIcon, MapIcon, MoreIcon, NetIcon, PinIcon } from "./components/Icons";
-import { LiveMap } from "./components/LiveMap";
+import { BrandMark, HistoryIcon, ListIcon, LogIcon, MapIcon, MoreIcon, NetIcon, PinIcon } from "./components/Icons";
 import { LocationPanel } from "./components/LocationPanel";
+import { NetControl } from "./components/NetControl";
+import { NettedDrawer } from "./components/NettedDrawer";
 import { NettedPanel, type NettedState } from "./components/NettedPanel";
 import { ReplayPanel } from "./components/ReplayPanel";
 import { SelectedDock } from "./components/SelectedDock";
@@ -18,9 +19,17 @@ import type { AircraftObservation } from "./domain/aircraft";
 import { NETTED_DEFAULT_HOURS, countRadiusVisits, toNettedDto } from "./domain/netted";
 import { buildRadiusRows } from "./domain/radius-list";
 import { VISIT_GAP_MINUTES, knotsToMph, milesToNm, nmToMiles } from "./domain/units";
+import { useNet } from "./lib/use-net";
 import { useSession } from "./lib/session";
 import { loadWatchArea, saveWatchArea, type WatchArea } from "./lib/watch-area";
 import { AccessDeniedError, AuthenticationRequiredError, ProviderNotConfiguredError } from "./providers/contracts";
+
+// Leaflet (and its CSS) is only needed once the map renders; keep it out of the entry chunk.
+const LiveMap = lazy(() => import("./components/LiveMap").then((module) => ({ default: module.LiveMap })));
+
+const NETTED_LAST_OPENED_KEY = "airintel.nettedLog.lastOpenedAt.v1";
+const readLastOpened = (): string | null => { try { return window.localStorage.getItem(NETTED_LAST_OPENED_KEY); } catch { return null; } };
+const writeLastOpened = (value: string) => { try { window.localStorage.setItem(NETTED_LAST_OPENED_KEY, value); } catch { /* storage is optional */ } };
 
 export type View = "map" | "aircraft" | "netted" | "history" | "more";
 const NAV: { id: View; label: string; icon: () => ReactNode }[] = [
@@ -47,11 +56,17 @@ export default function App() {
   const [submittedSearch, setSubmittedSearch] = useState("");
   const [selectedIcao24, setSelectedIcao24] = useState<string | null>(null);
   const [replayIndex, setReplayIndex] = useState(0);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerSince, setDrawerSince] = useState<string | null>(null);
+  const drawerTriggerRef = useRef<HTMLButtonElement>(null);
   const { latitude, longitude, radiusMi } = area;
   const radiusNm = milesToNm(radiusMi);
   const signedIn = session.status === "signed-in";
 
   const updateArea = (next: WatchArea) => { setArea(next); saveWatchArea(next); };
+  const net = useNet(signedIn, area);
+  const openDrawer = () => { setDrawerSince(readLastOpened()); setDrawerOpen(true); };
+  const closeDrawer = useCallback(() => { setDrawerOpen(false); writeLastOpened(new Date().toISOString()); }, []);
   const go = (next: View) => { setView(next); window.scrollTo({ top: 0 }); };
 
   const query = useMemo(() => ({ latitude, longitude, radiusNm }), [latitude, longitude, radiusNm]);
@@ -60,6 +75,9 @@ export default function App() {
     queryKey: ["aircraft", query, signedIn],
     queryFn: ({ signal }) => fetchAircraft(query, signal),
     refetchInterval: pollMs,
+    // Polling pauses while the tab is hidden/unfocused and resumes (with an immediate refetch) when it returns.
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
     retry: (count, error) => !(error instanceof ProviderNotConfiguredError) && count < 2,
   });
   const nearby = useQuery({
@@ -67,6 +85,7 @@ export default function App() {
     queryFn: ({ signal }) => fetchNearbyAircraft({ latitude, longitude, radiusNm, hours: 1 }, signal),
     enabled: signedIn,
     refetchInterval: pollMs,
+    refetchIntervalInBackground: false,
     retry: false,
   });
   const netted = useQuery({
@@ -74,6 +93,7 @@ export default function App() {
     queryFn: ({ signal }) => fetchNettedAircraft({ latitude, longitude, radiusMi, hours: NETTED_DEFAULT_HOURS }, signal),
     enabled: signedIn,
     refetchInterval: pollMs * 3,
+    refetchIntervalInBackground: false,
     retry: false,
   });
   // Newly recorded live observations should show up in the Netted log right away.
@@ -116,13 +136,22 @@ export default function App() {
     if (session.status === "unconfigured") return { kind: "session", reason: "unconfigured", aircraft: sessionList() };
     if (session.status === "checking") return { kind: "loading" };
     if (!signedIn) return { kind: "session", reason: "signed-out", aircraft: sessionList() };
-    if (netted.data) return { kind: "ready", source: "recorded", aircraft: netted.data.aircraft, hours: netted.data.query.hours, truncated: netted.data.truncated };
+    if (netted.data) return { kind: "ready", source: "recorded", aircraft: netted.data.aircraft, hours: netted.data.query.hours, truncated: netted.data.truncated, net: netted.data.net ?? net.status };
     if (netted.error instanceof AccessDeniedError) return { kind: "session", reason: "no-access", aircraft: sessionList() };
     if (netted.error instanceof AuthenticationRequiredError) return { kind: "session", reason: "signed-out", aircraft: sessionList() };
     if (netted.error instanceof ProviderNotConfiguredError) return { kind: "session", reason: "unconfigured", aircraft: sessionList() };
     if (netted.isError) return { kind: "session", reason: "error", aircraft: sessionList() };
     return { kind: "loading" };
   }, [session.status, signedIn, netted.data, netted.error, netted.isError, sessionObs, latitude, longitude, radiusNm]);
+
+  // Badge: entries (visits) that began in the last 24 h.
+  const entries24h = useMemo(() => {
+    if (nettedState.kind === "loading") return 0;
+    const cutoff = Date.now() - 24 * 3_600_000;
+    return nettedState.aircraft.reduce((sum, item) => sum + item.visits.filter((visit) => Date.parse(visit.enteredAt) >= cutoff).length, 0);
+  }, [nettedState]);
+  const openNetSettings = () => { closeDrawerIfOpen(); go("more"); };
+  const closeDrawerIfOpen = () => { if (drawerOpen) closeDrawer(); };
 
   const selectedRow = radiusRows.find((row) => row.icao24 === selectedIcao24) ?? null;
   const selectedNetted = nettedState.kind === "loading" ? null : nettedState.aircraft.find((item) => item.icao24 === selectedIcao24) ?? null;
@@ -138,6 +167,10 @@ export default function App() {
       <header className="topbar">
         <div className="brand"><BrandMark /><div className="brand-copy"><strong>AIRIntel</strong><span>AirRoute Intelligence</span></div></div>
         <span className={`status-pill is-${feedState.tone}`} role="status"><span className="pulse" aria-hidden="true" />{feedState.label}</span>
+        <button ref={drawerTriggerRef} type="button" className="icon-button log-button" onClick={openDrawer} aria-haspopup="dialog" aria-expanded={drawerOpen} aria-label={`Netted log${entries24h > 0 ? `, ${entries24h} ${entries24h === 1 ? "entry" : "entries"} in the last 24 hours` : ""}`}>
+          <LogIcon />
+          {entries24h > 0 && <span className="log-badge mono" aria-hidden="true">{entries24h > 99 ? "99+" : entries24h}</span>}
+        </button>
         <AuthPanel key={authPrompt} defaultOpen={authPrompt > 0} />
       </header>
 
@@ -158,18 +191,21 @@ export default function App() {
             </button>
             {recordingNote && <span className="status-pill is-ok small">{recordingNote}</span>}
           </div>
-          <ErrorBoundary>
-            <LiveMap id="live-feed" settingsOpen={mapSettingsOpen} onSettingsOpenChange={setMapSettingsOpen} center={[latitude, longitude]} observations={aircraft.data?.observations ?? []} selectedIcao24={selectedIcao24} onSelectAircraft={selectAircraft} radiusMi={radiusMi} trackPoints={track.data?.points ?? []} replayIndex={replayIndex} />
+          <ErrorBoundary label="The map">
+            <Suspense fallback={<div className="map-loading" role="status"><span className="spinner" aria-hidden="true" /> Loading map…</div>}>
+              <LiveMap id="live-feed" settingsOpen={mapSettingsOpen} onSettingsOpenChange={setMapSettingsOpen} center={[latitude, longitude]} observations={aircraft.data?.observations ?? []} selectedIcao24={selectedIcao24} onSelectAircraft={selectAircraft} radiusMi={radiusMi} trackPoints={track.data?.points ?? []} replayIndex={replayIndex} />
+            </Suspense>
           </ErrorBoundary>
         </div>
 
         <div className="content-region">
+          <ErrorBoundary key={view} label="This view">
           {(view === "map" || view === "aircraft") && (
             <div className={view === "map" ? "desktop-only" : undefined}>
               <AircraftList rows={radiusRows} selectedIcao24={selectedIcao24} onSelect={selectAircraft} radiusMi={radiusMi} loading={aircraft.isPending || (signedIn && nearby.isPending)} liveError={liveError} recordedNote={recordedNote} />
             </div>
           )}
-          {view === "netted" && <NettedPanel state={nettedState} radiusMi={radiusMi} selectedIcao24={selectedIcao24} onSelect={selectAircraft} onSignIn={() => setAuthPrompt((value) => value + 1)} />}
+          {view === "netted" && <NettedPanel state={nettedState} radiusMi={radiusMi} selectedIcao24={selectedIcao24} onSelect={selectAircraft} onSignIn={() => setAuthPrompt((value) => value + 1)} onOpenNetSettings={() => go("more")} />}
           {view === "history" && (
             <div className="stack-lg">
               <section className="panel" aria-labelledby="search-heading">
@@ -233,6 +269,7 @@ export default function App() {
           {view === "more" && (
             <div className="stack-lg">
               <LocationPanel area={area} onChange={updateArea} />
+              <NetControl state={net.state} area={area} saving={net.saving} saveError={net.saveError} onToggle={(enabled) => void net.setEnabled(enabled)} onSignIn={() => setAuthPrompt((value) => value + 1)} />
               <section className="panel" aria-labelledby="account-heading">
                 <header className="panel-header"><div><p className="eyebrow">Neon Auth</p><h2 id="account-heading">Account</h2></div></header>
                 {signedIn ? <AccountSummary /> : <AuthForm />}
@@ -246,8 +283,13 @@ export default function App() {
               <p className="fine-print about">Times are shown in your device's time zone; data is stored in UTC. Distances in statute miles, altitude in feet, speed in mph (converted from ground speed in knots). Live data: adsb.lol (ODbL).</p>
             </div>
           )}
+          </ErrorBoundary>
         </div>
       </main>
+
+      <NettedDrawer open={drawerOpen} onClose={closeDrawer} title="Netted log" subtitle={`Entries into your ${radiusMi} mi radius`}>
+        <NettedPanel variant="drawer" state={nettedState} radiusMi={radiusMi} selectedIcao24={selectedIcao24} newSince={drawerSince} onSelect={(icao24) => { selectAircraft(icao24); }} onSignIn={() => { closeDrawer(); setAuthPrompt((value) => value + 1); }} onOpenNetSettings={openNetSettings} />
+      </NettedDrawer>
 
       {selectedIcao24 && view !== "history" && view !== "more" && (
         <SelectedDock
