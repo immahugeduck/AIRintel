@@ -31,8 +31,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${SWEEP_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
-            echo "::error::Set the AIRINTEL_SWEEP_URL and CRON_SECRET repository secrets (see docs/netted-aircraft.md)."
-            exit 1
+            echo "::notice::Net sweep skipped: AIRINTEL_SWEEP_URL and CRON_SECRET repository secrets are not set (see docs/netted-aircraft.md)."
+            exit 0
           fi
           case "$SWEEP_URL" in https://*) ;; *) echo "::error::AIRINTEL_SWEEP_URL must start with https://"; exit 1;; esac
           # --fail-with-body: any non-2xx (401 bad secret, 502 provider down, 503 not configured) fails this job.
