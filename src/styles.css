@@ -212,6 +212,7 @@ input[type="range"] { width: 100%; min-height: var(--tap); accent-color: var(--a
 }
 .brand { display: flex; align-items: center; gap: .6rem; min-width: 0; margin-right: auto; }
 .brand svg { flex: none; }
+.brand-logo { width: 44px; height: 44px; flex: none; display: block; border-radius: 12px; object-fit: cover; box-shadow: 0 0 0 1px rgba(56, 189, 248, .2), 0 8px 24px rgba(0, 0, 0, .32); }
 .brand-copy { display: grid; line-height: 1.1; min-width: 0; }
 .brand-copy strong { font-size: 1.08rem; font-weight: 700; letter-spacing: -0.01em; }
 .brand-copy span { color: var(--text-faint); font-size: .72rem; white-space: nowrap; }
