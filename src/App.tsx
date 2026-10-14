@@ -8,7 +8,7 @@ import { AircraftProfilePanel } from "./components/AircraftProfilePanel";
 import { AccountSummary, AuthForm, AuthPanel } from "./components/AuthPanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { EvidenceUploadPanel } from "./components/EvidenceUploadPanel";
-import { BrandMark, HistoryIcon, ListIcon, LogIcon, MapIcon, MoreIcon, NetIcon, PinIcon } from "./components/Icons";
+import { HistoryIcon, ListIcon, LogIcon, MapIcon, MoreIcon, NetIcon, PinIcon } from "./components/Icons";
 import { LocationPanel } from "./components/LocationPanel";
 import { NetControl } from "./components/NetControl";
 import { NettedDrawer } from "./components/NettedDrawer";
@@ -165,7 +165,7 @@ export default function App() {
   return (
     <div className="app-shell" data-view={view}>
       <header className="topbar">
-        <div className="brand"><BrandMark /><div className="brand-copy"><strong>AIRIntel</strong><span>AirRoute Intelligence</span></div></div>
+        <div className="brand"><img className="brand-logo" src="/airintel-logo.svg" alt="" aria-hidden="true" /><div className="brand-copy"><strong>AIRIntel</strong><span>Air Route Intelligence</span></div></div>
         <span className={`status-pill is-${feedState.tone}`} role="status"><span className="pulse" aria-hidden="true" />{feedState.label}</span>
         <button ref={drawerTriggerRef} type="button" className="icon-button log-button" onClick={openDrawer} aria-haspopup="dialog" aria-expanded={drawerOpen} aria-label={`Netted log${entries24h > 0 ? `, ${entries24h} ${entries24h === 1 ? "entry" : "entries"} in the last 24 hours` : ""}`}>
           <LogIcon />
