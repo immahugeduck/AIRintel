@@ -11,7 +11,7 @@ import { WATCH_RADIUS_MI, formatAltitudeFt, formatLastSeen, formatSpeedMph, mile
 type Props = { id?: string; settingsOpen?: boolean; onSettingsOpenChange?: (open: boolean) => void; center: LatLngExpression; radiusMi?: number; observations?: AircraftObservation[]; selectedIcao24?: string | null; onSelectAircraft?: (icao24: string) => void; trackPoints?: TrackPoint[]; replayIndex?: number };
 
 /** Map colors mirror the CSS tokens in styles.css (--sky / --amber / --signal). */
-const MAP_COLORS = { aircraft: "#8cc4f2", selected: "#f2b544", radius: "#f2b544", trail: "#8cc4f2", me: "#7fd6a4" } as const;
+const MAP_COLORS = { aircraft: "#8cc4f2", selected: "#f2b544", radius: "#39ff8a", ring: "#22d3ee", trail: "#8cc4f2", me: "#7fd6a4" } as const;
 
 /** Leaflet only listens to window resizes; panels and tab switches resize the map container too. */
 function MapResizer() {
@@ -53,7 +53,12 @@ type StoredMapboxConfig = {
 };
 
 const MAPBOX_STORAGE_KEY = "airintel.mapbox.config";
-const DEFAULT_MAPBOX_STYLE = "mapbox/streets-v12";
+/** "AirIntel Radar": phosphor-green aviation radar basemap (runways, airports, coastlines; muted roads). */
+export const RADAR_MAPBOX_STYLE = "fcm-zkortesmaki/cmv9teawg00cy01smde3ihswi";
+const DEFAULT_MAPBOX_STYLE = RADAR_MAPBOX_STYLE;
+/** Older builds stored the generic streets style; upgrade those to the radar basemap. */
+const LEGACY_DEFAULT_STYLES = new Set(["mapbox/streets-v12"]);
+const RANGE_RINGS_MI = [1, 3, 5] as const;
 const sourceColors = ["#8cc4f2", "#f2b544", "#7fd6a4", "#e3a0c8"];
 
 const normalizeStyle = (input: string) => {
@@ -69,7 +74,8 @@ const loadStoredConfig = (): StoredMapboxConfig | null => {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<StoredMapboxConfig>;
     if (typeof parsed.accessToken !== "string" || !parsed.accessToken.trim().startsWith("pk.") || typeof parsed.style !== "string") return null;
-    const style = normalizeStyle(parsed.style);
+    const parsedStyle = normalizeStyle(parsed.style);
+    const style = parsedStyle && LEGACY_DEFAULT_STYLES.has(parsedStyle) ? DEFAULT_MAPBOX_STYLE : parsedStyle;
     return style ? { accessToken: parsed.accessToken.trim(), style } : null;
   } catch {
     return null;
@@ -79,7 +85,8 @@ const loadStoredConfig = (): StoredMapboxConfig | null => {
 const envConfig = (): StoredMapboxConfig | null => {
   const accessToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN?.trim();
   if (!accessToken?.startsWith("pk.")) return null;
-  const style = normalizeStyle(import.meta.env.VITE_MAPBOX_STYLE ?? DEFAULT_MAPBOX_STYLE) ?? DEFAULT_MAPBOX_STYLE;
+  const envStyle = normalizeStyle(import.meta.env.VITE_MAPBOX_STYLE ?? DEFAULT_MAPBOX_STYLE) ?? DEFAULT_MAPBOX_STYLE;
+  const style = LEGACY_DEFAULT_STYLES.has(envStyle) ? DEFAULT_MAPBOX_STYLE : envStyle;
   return { accessToken, style };
 };
 
@@ -183,7 +190,8 @@ export function LiveMap({ id, settingsOpen, onSettingsOpenChange, center, radius
         <MapContainer center={center} zoom={10} zoomControl={false} className="map" aria-label="Aircraft map" tapTolerance={20}>
           <MapResizer />
           <MapCenter center={center} radiusNm={radiusNm} />
-          <Circle center={center} radius={milesToMeters(radiusMi)} pathOptions={{ color: MAP_COLORS.radius, weight: 1.5, dashArray: "6 6", fillOpacity: 0.05 }} interactive={false} />
+          {RANGE_RINGS_MI.filter((ring) => ring < radiusMi).map((ring) => <Circle key={`ring:${ring}`} center={center} radius={milesToMeters(ring)} pathOptions={{ color: MAP_COLORS.ring, weight: 1, opacity: 0.35, dashArray: "2 6", fill: false }} interactive={false} />)}
+          <Circle center={center} radius={milesToMeters(radiusMi)} pathOptions={{ color: MAP_COLORS.radius, weight: 1.75, opacity: 0.9, fillColor: MAP_COLORS.radius, fillOpacity: 0.04 }} interactive={false} />
           <CircleMarker center={center} radius={7} pathOptions={{ color: "#0b1117", weight: 2, fillColor: MAP_COLORS.me, fillOpacity: 1 }}><Tooltip direction="bottom">My location · {radiusMi} mi radius</Tooltip></CircleMarker>
           <ZoomControl position="bottomright" />
           {tileUrl ? (
@@ -245,7 +253,7 @@ export function LiveMap({ id, settingsOpen, onSettingsOpenChange, center, radius
             </label>
             <label>
               Mapbox style
-              <input type="text" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={styleInput} placeholder="mapbox/streets-v12" onChange={(event) => setStyleInput(event.currentTarget.value)} />
+              <input type="text" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} value={styleInput} placeholder="fcm-zkortesmaki/cmv9teawg00cy01smde3ihswi" onChange={(event) => setStyleInput(event.currentTarget.value)} />
               <small>Accepted: username/style-id or mapbox://styles/username/style-id. Static Leaflet tiles do not currently support Mapbox Standard.</small>
             </label>
             {setupError && <p className="mapbox-dialog-error" role="alert">{setupError}</p>}
