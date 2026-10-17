@@ -4,7 +4,7 @@ import type { TokenVerifier } from "./auth.js";
 import { readConfig, type NetConfig } from "./config.js";
 import type { Queryable } from "./db.js";
 import { setLogSink } from "./logger.js";
-import { planSweep, runSweep, fetchRadiusNm } from "./net-sweep.js";
+import { PROVIDER_TIMEOUT_MS, SWEEP_LEASE_SECONDS, planSweep, providerAttemptOptions, runSweep, fetchRadiusNm } from "./net-sweep.js";
 import { recordObservations } from "./recorder.js";
 import { secretsMatch } from "./routes/net.js";
 import { distanceNm } from "../src/domain/geometry.js";
@@ -17,7 +17,7 @@ const SECRET = "test-fixture-cron-secret-0123456789abcdef";
 const userA = "860dc360-609f-4b7d-9e70-ec93fe6414d3";
 const userB = "0f6d9a54-1111-4222-8333-444455556666";
 const verifier: TokenVerifier = async (token) => (token === "good" ? { id: userA, email: "a@example.com" } : token === "other" ? { id: userB, email: "b@example.com" } : null);
-const NET: NetConfig = { maxAreas: 25, marginFactor: 2, minIntervalSeconds: 30, budgetMs: 22_000, retentionDays: undefined };
+const NET: NetConfig = { maxAreas: 25, marginFactor: 2, minIntervalSeconds: 30, budgetMs: 40_000, retentionDays: undefined };
 
 type AreaFixture = { user_id: string; latitude: number; longitude: number; radius_mi: number; enabled: boolean; last_polled_at: Date | null; last_success_at: Date | null; last_poll_status: string | null; created_at: Date; updated_at: Date };
 const area = (user_id: string, latitude: number, longitude: number, radius_mi = 7, extra: Partial<AreaFixture> = {}): AreaFixture => ({ user_id, latitude, longitude, radius_mi, enabled: true, last_polled_at: null, last_success_at: null, last_poll_status: null, created_at: new Date(), updated_at: new Date(), ...extra });
@@ -131,7 +131,7 @@ describe("sweep authentication", () => {
 describe("config validation", () => {
   it("rejects out-of-range sweep tuning with clear messages and safe defaults", () => {
     const config = readConfig({ NET_SWEEP_MAX_AREAS: "0", NET_SWEEP_MARGIN_FACTOR: "9", NET_RETENTION_DAYS: "2", NET_SWEEP_BUDGET_MS: "abc" });
-    expect(config.net).toMatchObject({ maxAreas: 25, marginFactor: 2, budgetMs: 22_000, retentionDays: undefined });
+    expect(config.net).toMatchObject({ maxAreas: 25, marginFactor: 2, budgetMs: 40_000, retentionDays: undefined });
     expect(config.issues.map((issue) => issue.variable).sort()).toEqual(["DATABASE_URL", "NEON_AUTH_BASE_URL", "NET_RETENTION_DAYS", "NET_SWEEP_BUDGET_MS", "NET_SWEEP_MARGIN_FACTOR", "NET_SWEEP_MAX_AREAS"]);
   });
 
@@ -144,6 +144,28 @@ describe("config validation", () => {
     const issues = readConfig({ VITE_CRON_SECRET: "x", VITE_MAPBOX_ACCESS_TOKEN: "pk.public" }).issues;
     expect(issues.some((issue) => issue.variable === "VITE_CRON_SECRET" && issue.level === "error")).toBe(true);
     expect(issues.some((issue) => issue.variable === "VITE_MAPBOX_ACCESS_TOKEN")).toBe(false);
+  });
+});
+
+describe("provider wait and sweep budget", () => {
+  it("waits up to 15 s per adsb.lol attempt and retries only when two full attempts still fit", () => {
+    expect(PROVIDER_TIMEOUT_MS).toBe(15_000);
+    expect(providerAttemptOptions(40_000)).toEqual({ timeoutMs: 15_000, retries: 1 });
+    expect(providerAttemptOptions(31_000)).toEqual({ timeoutMs: 15_000, retries: 0 });
+    expect(providerAttemptOptions(9_000)).toEqual({ timeoutMs: 9_000, retries: 0 });
+    expect(providerAttemptOptions(500)).toEqual({ timeoutMs: 2_000, retries: 0 });
+  });
+
+  it("defaults to a 40 s budget that fits the 60 s function limit, and caps overrides at 45 s", async () => {
+    expect(readConfig({}).net.budgetMs).toBe(40_000);
+    const tooLong = readConfig({ NET_SWEEP_BUDGET_MS: "55000" });
+    expect(tooLong.net.budgetMs).toBe(40_000);
+    expect(tooLong.issues.map((issue) => issue.variable)).toContain("NET_SWEEP_BUDGET_MS");
+    const { readFileSync } = await import("node:fs");
+    const maxDuration = (JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8")) as { functions: Record<string, { maxDuration: number }> }).functions["api/index.ts"]!.maxDuration;
+    // Worst case: budget + record overshoot (6 s) + slack must fit; the lease must outlive the function.
+    expect(45_000 + 6_000 + 5_000).toBeLessThanOrEqual(maxDuration * 1000);
+    expect(SWEEP_LEASE_SECONDS * 1000).toBeGreaterThan(maxDuration * 1000);
   });
 });
 
@@ -298,7 +320,7 @@ describe("runSweep with a stubbed provider and database", () => {
   it("defers queries once the time budget is exhausted so the next sweep picks them up", async () => {
     const stub = stubDb({ areas: [area(userA, 40, -86), area(userB, 10, 10)] });
     let clock = 0;
-    const fetchImpl = vi.fn(async () => { clock += 30_000; return new Response(JSON.stringify(providerPayload([])), { status: 200 }); });
+    const fetchImpl = vi.fn(async () => { clock += 45_000; return new Response(JSON.stringify(providerPayload([])), { status: 200 }); });
     const summary = await runSweep(base(stub, fetchImpl as never, { now: () => clock }));
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(summary).toMatchObject({ status: "partial", areas: { queried: 1, deferred: 1 } });

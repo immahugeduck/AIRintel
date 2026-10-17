@@ -126,7 +126,7 @@ export function readConfig(env: Env = process.env): ServerConfig {
     maxAreas: integerEnv(env, "NET_SWEEP_MAX_AREAS", 25, { min: 1, max: 100 }, issues),
     marginFactor,
     minIntervalSeconds: integerEnv(env, "NET_SWEEP_MIN_INTERVAL_SECONDS", 30, { min: 0, max: 3600 }, issues),
-    budgetMs: integerEnv(env, "NET_SWEEP_BUDGET_MS", 22_000, { min: 2_000, max: 55_000 }, issues),
+    budgetMs: integerEnv(env, "NET_SWEEP_BUDGET_MS", 40_000, { min: 2_000, max: 45_000 }, issues),
     retentionDays,
   };
 
