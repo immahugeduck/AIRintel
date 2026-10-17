@@ -103,6 +103,11 @@ export const nettedQuerySchema = z.object({
   lon: z.coerce.number().finite().min(-180).max(180),
   radiusMi: z.coerce.number().finite().min(MIN_WATCH_RADIUS_MI).max(MAX_WATCH_RADIUS_MI).default(WATCH_RADIUS_MI),
   hours: z.coerce.number().int().min(1).max(NETTED_MAX_HOURS).default(NETTED_DEFAULT_HOURS),
+  /**
+   * "log": the caller's saved per-account encounter log with lifetime counts (migration 0006). The server falls back
+   * to "window" (visits recomputed from recorded positions in the last `hours`) while that log is empty or missing.
+   */
+  scope: z.enum(["window", "log"]).default("window"),
 });
 export type NettedQuery = z.infer<typeof nettedQuerySchema>;
 
@@ -123,6 +128,7 @@ export const nettedAircraftSchema = z.object({
   registration: z.string().trim().min(1).nullable(),
   /** Provider-reported ICAO type designator from the latest retained raw observation, when present. */
   aircraftTypeCode: z.string().trim().min(1).nullable(),
+  /** Encounters counted: lifetime total for the account when the response source is "log", else within the window. */
   visitCount: z.number().int().positive(),
   firstSeenAt: utc,
   lastSeenAt: utc,
@@ -149,6 +155,8 @@ export const nettedResponseSchema = z.object({
   aircraft: z.array(nettedAircraftSchema),
   /** Freshness of the always-on net for the caller; absent from older servers. */
   net: netStatusSchema.nullish(),
+  /** "log": lifetime counts from the saved per-account log; "window": recomputed for the time window. Older servers omit it. */
+  source: z.enum(["window", "log"]).default("window"),
 });
 export type NettedResponse = z.infer<typeof nettedResponseSchema>;
 

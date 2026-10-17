@@ -21,12 +21,28 @@ export function describeNetError(error: unknown): NetControlState & { kind: "una
   return { kind: "unavailable", reason: "error", message: error instanceof Error ? error.message : "The net status could not be loaded." };
 }
 
+/** True when the account's saved area should replace this browser's area (new device, or changed elsewhere). */
+export function shouldAdoptServerArea(area: WatchArea, saved: { latitude: number; longitude: number; radiusMi: number; updatedAt: string } | null): boolean {
+  if (!saved || sameArea(area, saved)) return false;
+  if (area.source === "default" || !area.updatedAt) return true;
+  return Date.parse(saved.updatedAt) > Date.parse(area.updatedAt);
+}
+
+/** True when this browser's area is newer than the account's copy and should be saved to the account. */
+export function shouldSaveBrowserArea(area: WatchArea, saved: { latitude: number; longitude: number; radiusMi: number; updatedAt: string } | null): boolean {
+  if (area.source === "default" || !area.updatedAt) return false;
+  if (!saved) return true;
+  return Date.parse(area.updatedAt) > Date.parse(saved.updatedAt) && !sameArea(area, saved);
+}
+
 /**
  * Server-side net state for the signed-in user plus the enable/pause mutation.
- * While the net is enabled, changing the saved location/radius in this browser re-saves it (debounced) so the sweep
- * follows the user. A browser still on the unsaved default area never overwrites a saved server-side area.
+ * The watch area is account-backed: when signed in, the area saved to the account is loaded into this browser
+ * (`onAdoptArea`) if it is newer (or this browser still has the default), and a newer area chosen in this browser is
+ * saved to the account (debounced), keeping the net's enabled/paused setting. Browser storage stays the fallback
+ * when signed out or when the server is unavailable. A still-default browser never overwrites a saved area.
  */
-export function useNet(signedIn: boolean, area: WatchArea) {
+export function useNet(signedIn: boolean, area: WatchArea, onAdoptArea?: (next: WatchArea) => void) {
   const client = useQueryClient();
   const query = useQuery({
     queryKey: ["watch-area"],
@@ -53,15 +69,25 @@ export function useNet(signedIn: boolean, area: WatchArea) {
     }
   };
 
-  const syncKey = saved?.enabled && area.source !== "default" && area.updatedAt && Date.parse(area.updatedAt) > Date.parse(saved.updatedAt) && !sameArea(area, saved)
-    ? `${area.latitude}:${area.longitude}:${area.radiusMi}` : null;
-  const latest = useRef({ area, mutate: mutation.mutate });
-  latest.current = { area, mutate: mutation.mutate };
+  // Load the account's area into this browser.
+  const adoptKey = signedIn && query.isSuccess && !mutation.isPending && shouldAdoptServerArea(area, saved) ? `${saved!.latitude}:${saved!.longitude}:${saved!.radiusMi}:${saved!.updatedAt}` : null;
+  const latestAdopt = useRef({ saved, onAdoptArea });
+  latestAdopt.current = { saved, onAdoptArea };
+  useEffect(() => {
+    const { saved: current, onAdoptArea: adopt } = latestAdopt.current;
+    if (!adoptKey || !current || !adopt) return;
+    adopt({ latitude: current.latitude, longitude: current.longitude, radiusMi: current.radiusMi, source: "saved", updatedAt: current.updatedAt });
+  }, [adoptKey]);
+
+  // Save a newer browser area to the account.
+  const syncKey = signedIn && query.isSuccess && shouldSaveBrowserArea(area, saved) ? `${area.latitude}:${area.longitude}:${area.radiusMi}` : null;
+  const latest = useRef({ area, mutate: mutation.mutate, enabled: saved?.enabled ?? false });
+  latest.current = { area, mutate: mutation.mutate, enabled: saved?.enabled ?? false };
   useEffect(() => {
     if (!syncKey) return;
     const timer = setTimeout(() => {
-      const { area: current, mutate } = latest.current;
-      mutate({ latitude: current.latitude, longitude: current.longitude, radiusMi: current.radiusMi, enabled: true }, { onError: (error) => setSaveError(describeNetError(error).message) });
+      const { area: current, mutate, enabled } = latest.current;
+      mutate({ latitude: current.latitude, longitude: current.longitude, radiusMi: current.radiusMi, enabled }, { onError: (error) => setSaveError(describeNetError(error).message) });
     }, 1_500);
     return () => clearTimeout(timer);
   }, [syncKey]);

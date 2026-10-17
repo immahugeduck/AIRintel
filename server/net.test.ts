@@ -228,6 +228,23 @@ describe("runSweep with a stubbed provider and database", () => {
     expect(stub.state.polled[0]!.ids.sort()).toEqual([userA, userB].sort());
   });
 
+  it("credits each area owner with their own encounters, measured against their own radius", async () => {
+    const stub = stubDb({ areas: [area(userA, 40, -86, 7), area(userB, 40.005, -86.005, 3)] });
+    const encounters: unknown[][] = [];
+    const db: Queryable = {
+      query: async (text: string, params?: readonly unknown[]) => {
+        if (text.includes("insert into airintel_private.user_aircraft_tallies")) return { rows: [{ icao24: params?.[1] }] } as never;
+        if (text.includes("insert into airintel_private.encounters")) { encounters.push([...(params ?? [])]); return { rows: [{ id: `enc-${encounters.length}` }] } as never; }
+        return stub.db.query(text, params);
+      },
+    };
+    // abc123 is inside both radii; def456 (~5 mi out) is inside A's 7 mi radius only.
+    const summary = await runSweep({ ...base(stub, okFetch([aircraftRow("abc123", 40.01, -86.01), aircraftRow("def456", 40.07, -86.0)])), db });
+    expect(summary.encounters.started).toBe(3);
+    const credited = encounters.map((row) => `${String(row[0])}:${String(row[1])}:${String(row[11])}`).sort();
+    expect(credited).toEqual([`${userA}:abc123:sweep`, `${userA}:def456:sweep`, `${userB}:abc123:sweep`].sort());
+  });
+
   it("reports provider failure honestly (failed, not recorded as swept) and leaks no payloads or secrets", async () => {
     const stub = stubDb({ areas: [area(userA, 40, -86)] });
     const fetchImpl = vi.fn(async () => new Response("<html>oops secret-token-123</html>", { status: 503 }));

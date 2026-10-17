@@ -71,3 +71,16 @@ Coverage caveat: with 5-minute polling, a slow aircraft that is inside the radiu
 3. Confirm that a signed-out browser still sees live aircraft but `recording` is `not_signed_in` and no rows are written.
 4. Close the app, wait for a sweep (or run Actions → Net sweep → Run workflow), then reopen: **More** should read "Net active – last sweep … ago" and passes made while closed appear under **Netted**.
 5. Without the secret the sweep must refuse: `curl -i -X POST https://<domain>/api/net/sweep` → `401` (or `503` when `CRON_SECRET` is unset).
+
+## Per-account encounter log (migration 0006)
+
+Each signed-in account keeps its own saved log, so it survives closing the app and is the same on every device:
+
+- `airintel_private.encounters`: one row per encounter (aircraft entering that account's watch radius, `netted-visits-v1` rule), with entry time, last time seen inside, closest approach, observation count, the area it was measured against and the writer (`live` or `sweep`).
+- `airintel_private.user_aircraft_tallies`: one row per (account, aircraft) with the lifetime `encounter_count`, first/last encounter, closest approach and the detection watermark.
+
+Writers (`server/encounters.ts`): after the live view records observations for a signed-in user with the `history` grant, they are credited to that user (measured against the live view's center and radius). After each sweep query, every member area's owner is credited, measured against their own saved radius. Detection is incremental and guarded per (account, aircraft) by a compare-and-set on `last_observed_at`, so replays and overlapping writers never double count. Encounters only start being logged once 0006 is applied; earlier positions are not backfilled.
+
+Reader: `GET /history?action=netted&scope=log` returns the caller's tallies (lifetime `visitCount`) with the newest 100 encounters each (`source: "log"`). While the log is empty or not migrated it falls back to the recomputed window (`source: "window"`). The app uses `scope=log`.
+
+The watch area is account-backed: when signed in, the area saved on the account loads into the browser (new device, or changed elsewhere), and a newer area chosen in the browser is saved to the account (keeping the net's on/paused setting). Browser storage remains the fallback when signed out.

@@ -10,7 +10,7 @@ import { NetStatusLine } from "./NetControl";
 
 export type NettedState =
   | { kind: "loading" }
-  | { kind: "ready"; aircraft: NettedAircraft[]; hours: number; truncated: boolean; source: "recorded"; net?: NetStatus | null | undefined }
+  | { kind: "ready"; aircraft: NettedAircraft[]; hours: number; truncated: boolean; source: "recorded"; net?: NetStatus | null | undefined; /** Counts are lifetime totals from the account's saved encounter log. */ lifetime?: boolean | undefined }
   | { kind: "session"; aircraft: NettedAircraft[]; reason: "signed-out" | "no-access" | "unconfigured" | "error"; message?: string };
 
 type Props = {
@@ -94,12 +94,13 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
   const totalVisits = aircraft.reduce((sum, item) => sum + item.visitCount, 0);
 
   const net = state.kind === "ready" ? state.net ?? null : null;
+  const lifetime = state.kind === "ready" && state.lifetime === true;
   const drawer = variant === "drawer";
   return (
     <section className={`panel netted${drawer ? " netted-drawer-panel" : ""}`} aria-labelledby={`netted-heading${drawer ? "-drawer" : ""}`}>
       <header className="panel-header">
         <div>
-          <p className="eyebrow">Entered my {formatRadius(radiusMi)} radius{state.kind === "ready" ? ` · last ${state.hours >= 48 ? `${Math.round(state.hours / 24)} days` : `${state.hours} h`}` : state.kind === "session" ? " · this visit" : ""}</p>
+          <p className="eyebrow">Entered my {formatRadius(radiusMi)} radius{state.kind === "ready" ? (state.lifetime ? " · all time, saved to your account" : ` · last ${state.hours >= 48 ? `${Math.round(state.hours / 24)} days` : `${state.hours} h`}`) : state.kind === "session" ? " · this visit" : ""}</p>
           <h2 id={`netted-heading${drawer ? "-drawer" : ""}`}>Netted aircraft <span className="count-badge" aria-label={`${aircraft.length} aircraft`}>{aircraft.length}</span></h2>
         </div>
         {aircraft.length > 0 && <span className="hint">{totalVisits} {totalVisits === 1 ? "entry" : "entries"}</span>}
@@ -120,7 +121,7 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
           {state.reason === "signed-out" && onSignIn && <button type="button" className="button button-primary" onClick={onSignIn}>Sign in</button>}
         </div>
       )}
-      {state.kind === "ready" && state.truncated && <p className="notice notice-warn">Only part of the recorded window could be scanned. Counts may be low; try a shorter period.</p>}
+      {state.kind === "ready" && state.truncated && <p className="notice notice-warn">{lifetime ? "Showing your 500 most recently encountered aircraft." : "Only part of the recorded window could be scanned. Counts may be low; try a shorter period."}</p>}
 
       {state.kind === "loading" ? (
         <div className="empty-state" role="status"><span className="spinner" aria-hidden="true" /><p>Loading your Netted log…</p></div>
@@ -142,8 +143,8 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
                     <span className="netted-callsign mono">{item.callsign ?? <span className="unknown">Unknown</span>}</span>
                     <span className="netted-ident">{item.registration ?? "Registration unknown"} · {item.aircraftTypeCode ?? "Type unknown"}</span>
                   </button>
-                  <span className="visit-counter" aria-label={`Entered the radius ${item.visitCount} ${item.visitCount === 1 ? "time" : "times"}`}>
-                    <strong className="mono">{item.visitCount}×</strong><small>{item.visitCount === 1 ? "entry" : "entries"}</small>
+                  <span className="visit-counter" aria-label={`Entered the radius ${item.visitCount} ${item.visitCount === 1 ? "time" : "times"}${lifetime ? " in total" : ""}`}>
+                    <strong className="mono">{item.visitCount}×</strong><small>{lifetime ? (item.visitCount === 1 ? "encounter" : "encounters") : item.visitCount === 1 ? "entry" : "entries"}</small>
                   </span>
                 </div>
                 <dl className="netted-facts">
@@ -161,7 +162,7 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
           })}
         </ul>
       )}
-      <p className="fine-print">An entry is counted each time an aircraft is observed inside the radius after being outside it, or after more than 10 minutes without any observation. Calculated from recorded observations only; nothing is estimated between reception gaps.</p>
+      <p className="fine-print">An entry is counted each time an aircraft is observed inside the radius after being outside it, or after more than 10 minutes without any observation. Calculated from recorded observations only; nothing is estimated between reception gaps.{lifetime ? " Encounter counts are lifetime totals saved to your account, so they stay the same after closing the app and on every device you sign in on." : ""}</p>
     </section>
   );
 }

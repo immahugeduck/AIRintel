@@ -104,20 +104,20 @@ describe("live view -> flight recorder contribution", () => {
 
   it("never writes for anonymous or unverified callers", async () => {
     const db = fakeDb(["history"]);
-    expect((await recordLiveObservations(deps(db), undefined, 6, liveResult())).status).toBe("not_signed_in");
-    expect((await recordLiveObservations(deps(db), "Bearer bad", 6, liveResult())).status).toBe("not_signed_in");
+    expect((await recordLiveObservations(deps(db), undefined, { latitude: 40, longitude: -86, radiusNm: 6 }, liveResult())).status).toBe("not_signed_in");
+    expect((await recordLiveObservations(deps(db), "Bearer bad", { latitude: 40, longitude: -86, radiusNm: 6 }, liveResult())).status).toBe("not_signed_in");
     expect(db.sql.some((text) => text.includes("record_aircraft_observation"))).toBe(false);
   });
 
   it("requires the history grant and a bounded radius", async () => {
-    expect((await recordLiveObservations(deps(fakeDb(["profile"])), "Bearer good", 6, liveResult())).status).toBe("no_history_access");
-    expect((await recordLiveObservations(deps(fakeDb(["history"])), "Bearer good", 80, liveResult())).status).toBe("radius_too_large");
-    expect((await recordLiveObservations(deps(null), "Bearer good", 6, liveResult())).status).toBe("unavailable");
+    expect((await recordLiveObservations(deps(fakeDb(["profile"])), "Bearer good", { latitude: 40, longitude: -86, radiusNm: 6 }, liveResult())).status).toBe("no_history_access");
+    expect((await recordLiveObservations(deps(fakeDb(["history"])), "Bearer good", { latitude: 40, longitude: -86, radiusNm: 80 }, liveResult())).status).toBe("radius_too_large");
+    expect((await recordLiveObservations(deps(null), "Bearer good", { latitude: 40, longitude: -86, radiusNm: 6 }, liveResult())).status).toBe("unavailable");
   });
 
   it("writes real provider observations through the existing recorder function with the raw row", async () => {
     const db = fakeDb(["history"], (text) => (text.includes("record_aircraft_observation") ? [{ inserted: true }] : undefined));
-    const outcome = await recordLiveObservations(deps(db), "Bearer good", 6, liveResult());
+    const outcome = await recordLiveObservations(deps(db), "Bearer good", { latitude: 40, longitude: -86, radiusNm: 6 }, liveResult());
     expect(outcome).toMatchObject({ status: "recorded", result: { received: 1, inserted: 1, rejected: 0 } });
     const index = db.sql.findIndex((text) => text.includes("record_aircraft_observation"));
     const payload = JSON.parse(String(db.params[index]![0])) as Record<string, unknown>;
@@ -146,5 +146,61 @@ describe("live view -> flight recorder contribution", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("GET /history?action=netted&scope=log (saved per-account encounter log)", () => {
+  const tally = { icao24: "abc123", encounter_count: 7, first_encountered_at: new Date("2026-10-01T12:00:00Z"), last_seen_in_radius_at: new Date("2026-10-17T12:05:00Z"), closest_approach_nm: 1.5, last_callsign: "TEST1", last_registration: "N1TEST" };
+  const encounter = (minute: number) => ({ icao24: "abc123", entered_at: new Date(Date.parse("2026-10-17T12:00:00Z") + minute * 60_000), last_seen_in_radius_at: new Date(Date.parse("2026-10-17T12:01:00Z") + minute * 60_000), closest_approach_nm: 2, observation_count: 3 });
+
+  it("returns lifetime counts from the caller's own tallies with the newest encounters", async () => {
+    const db = fakeDb(["history"], (text) => {
+      if (text.includes("from airintel_private.user_aircraft_tallies")) return [tally];
+      if (text.includes("from airintel_private.encounters")) return [encounter(5), encounter(0)];
+      return undefined;
+    });
+    const response = await get(build(db), "/history?action=netted&lat=40&lon=-86&scope=log", authed);
+    expect(response.status).toBe(200);
+    const body = await response.json() as { source: string; aircraft: Array<{ visitCount: number; visits: unknown[]; callsign: string; firstSeenAt: string }> };
+    expect(body.source).toBe("log");
+    expect(body.aircraft[0]).toMatchObject({ visitCount: 7, callsign: "TEST1", firstSeenAt: "2026-10-01T12:00:00.000Z" });
+    expect(body.aircraft[0]!.visits).toHaveLength(2);
+    // Scoped by the verified JWT subject, never by a query parameter.
+    const index = db.sql.findIndex((text) => text.includes("from airintel_private.user_aircraft_tallies"));
+    expect(db.params[index]).toEqual([userId]);
+    expect(db.sql.some((text) => text.includes("with center"))).toBe(false);
+  });
+
+  it("falls back to the recomputed window while the log is empty or not migrated", async () => {
+    const empty = await get(build(fakeDb(["history"])), "/history?action=netted&lat=40&lon=-86&scope=log", authed);
+    expect((await empty.json() as { source: string }).source).toBe("window");
+    const missing = fakeDb(["history"], (text) => {
+      if (text.includes("user_aircraft_tallies")) throw Object.assign(new Error("missing"), { code: "42P01" });
+      return undefined;
+    });
+    const response = await get(build(missing), "/history?action=netted&lat=40&lon=-86&scope=log", authed);
+    expect(response.status).toBe(200);
+    expect((await response.json() as { source: string }).source).toBe("window");
+  });
+
+  it("rejects an unknown scope", async () => {
+    expect((await get(build(), "/history?action=netted&lat=40&lon=-86&scope=everyone", authed)).status).toBe(400);
+  });
+});
+
+describe("live view -> per-account encounter log", () => {
+  it("credits the signed-in caller's own log after recording", async () => {
+    const db = fakeDb(["history"], (text) => {
+      if (text.includes("record_aircraft_observation")) return [{ inserted: true }];
+      if (text.includes("insert into airintel_private.user_aircraft_tallies")) return [{ icao24: "abc123" }];
+      if (text.includes("insert into airintel_private.encounters")) return [{ id: "11111111-2222-4333-8444-555555555555" }];
+      return undefined;
+    });
+    const outcome = await recordLiveObservations({ db, verifier, limiter: new RateLimiter(5) }, "Bearer good", { latitude: 40, longitude: -86, radiusNm: 6 }, liveResult());
+    expect(outcome.status).toBe("recorded");
+    const index = db.sql.findIndex((text) => text.includes("insert into airintel_private.encounters"));
+    expect(index).toBeGreaterThan(-1);
+    expect(db.params[index]![0]).toBe(userId);
+    expect(db.params[index]![11]).toBe("live");
   });
 });

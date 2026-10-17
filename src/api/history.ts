@@ -82,13 +82,14 @@ export async function fetchNearbyAircraft(query: NearbyAircraftQuery, signal?: A
 }
 
 /** Aircraft netted inside the watch radius with their visit counters (server-computed from recorded observations). */
-export async function fetchNettedAircraft(query: { latitude: number; longitude: number; radiusMi: number; hours?: number }, signal?: AbortSignal) {
-  const safe = nettedQuerySchema.parse({ lat: query.latitude, lon: query.longitude, radiusMi: query.radiusMi, hours: query.hours });
+export async function fetchNettedAircraft(query: { latitude: number; longitude: number; radiusMi: number; hours?: number; scope?: "window" | "log" }, signal?: AbortSignal) {
+  const safe = nettedQuerySchema.parse({ lat: query.latitude, lon: query.longitude, radiusMi: query.radiusMi, hours: query.hours, scope: query.scope });
   const url = resolveApiUrl(endpoint());
   url.searchParams.set("action", "netted");
   url.searchParams.set("lat", String(safe.lat));
   url.searchParams.set("lon", String(safe.lon));
   url.searchParams.set("radiusMi", String(safe.radiusMi));
   url.searchParams.set("hours", String(safe.hours));
+  if (safe.scope !== "window") url.searchParams.set("scope", safe.scope);
   return nettedResponseSchema.parse(await getJson(url, signal));
 }
