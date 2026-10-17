@@ -34,7 +34,7 @@ export type AppDependencies = {
   sweepProviderOptions?: ProviderFetchOptions;
 };
 
-const DEFAULT_NET: NetConfig = { maxAreas: 25, marginFactor: 2, minIntervalSeconds: 30, budgetMs: 22_000, retentionDays: undefined };
+const DEFAULT_NET: NetConfig = { maxAreas: 25, marginFactor: 2, minIntervalSeconds: 30, budgetMs: 40_000, retentionDays: undefined };
 
 /**
  * One portable Fetch-API app that replaces the five Supabase Edge Functions.

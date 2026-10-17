@@ -58,6 +58,8 @@ Vercel Pro snippet (add to `vercel.json`; do **not** add it on Hobby):
 
 You can run GitHub Actions and one other trigger together: the lease and `NET_SWEEP_MIN_INTERVAL_SECONDS` make extra calls harmless.
 
+Provider wait: each sweep waits up to 15 s per adsb.lol request (one retry when the 40 s budget `NET_SWEEP_BUDGET_MS` still has room for two attempts; max 45 s), inside the 60 s Vercel function limit (`vercel.json` `maxDuration`). The GitHub workflow reports each run in its summary: a run where adsb.lol did not answer stays green but carries a warning ("recorded nothing: the aircraft provider did not answer"); only setup problems (wrong secret, endpoint unreachable, not configured) fail the job.
+
 Coverage caveat: with 5-minute polling, a slow aircraft that is inside the radius for under 5 minutes can still be missed entirely. The log shows only what was observed; nothing is interpolated.
 
 ### Retention

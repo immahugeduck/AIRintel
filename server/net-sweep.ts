@@ -18,7 +18,13 @@ import { recordObservations, type RecordResult } from "./recorder.js";
  */
 
 export const MAX_FETCH_RADIUS_NM = 50;
-export const SWEEP_LEASE_SECONDS = 45;
+/**
+ * Per-attempt wait for adsb.lol. It can take 10+ s to answer when busy, so 15 s (was 8 s) gives a slow but working
+ * provider a chance. Must fit (with the default 40 s budget) inside the Vercel function limit (vercel.json maxDuration 60).
+ */
+export const PROVIDER_TIMEOUT_MS = 15_000;
+/** The lease outlives the longest possible run (maxDuration 60 s), so an overlapping sweep can never start mid-run. */
+export const SWEEP_LEASE_SECONDS = 75;
 const RECORD_CHUNK = 20;
 const PURGE_BATCH = 5_000;
 const PURGE_EVERY_MS = 6 * 3_600_000;
@@ -62,6 +68,14 @@ export function planSweep(areas: readonly SweepArea[], marginFactor: number, max
     queries.push({ latitude: area.latitude, longitude: area.longitude, radiusNm, members: [area] });
   }
   return { queries, covered, deferred };
+}
+
+/**
+ * Wait per provider attempt for the time left in the sweep budget: up to PROVIDER_TIMEOUT_MS, and one retry only when
+ * two full attempts (plus backoff) still fit.
+ */
+export function providerAttemptOptions(remainingMs: number): { timeoutMs: number; retries: number } {
+  return { timeoutMs: Math.max(2_000, Math.min(PROVIDER_TIMEOUT_MS, remainingMs)), retries: remainingMs >= PROVIDER_TIMEOUT_MS * 2 + 2_000 ? 1 : 0 };
 }
 
 export type SweepDeps = {
@@ -141,7 +155,7 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
       attempted += 1;
       summary.areas.queried += 1;
       const remaining = deps.net.budgetMs - elapsed;
-      const providerOptions: ProviderFetchOptions = { timeoutMs: Math.max(2_000, Math.min(8_000, remaining)), retries: remaining > 12_000 ? 1 : 0, ...deps.providerOptions };
+      const providerOptions: ProviderFetchOptions = { ...providerAttemptOptions(remaining), ...deps.providerOptions };
       const memberIds = query.members.map((member) => member.userId);
       let result: LiveAircraftResult;
       try {

@@ -35,9 +35,33 @@ jobs:
             exit 0
           fi
           case "$SWEEP_URL" in https://*) ;; *) echo "::error::AIRINTEL_SWEEP_URL must start with https://"; exit 1;; esac
-          # --fail-with-body: any non-2xx (401 bad secret, 502 provider down, 503 not configured) fails this job.
-          # The Authorization header is read from stdin so the secret never appears in the process list or logs.
-          printf 'header = "Authorization: Bearer %s"\n' "$CRON_SECRET" | curl --silent --show-error --fail-with-body \
-            --max-time 45 --retry 2 --retry-delay 5 --retry-connrefused \
-            --config - -X POST -H "Accept: application/json" "$SWEEP_URL"
-          echo
+          # No curl retry on HTTP errors: the endpoint already retries the provider, and a blind retry used to hide a
+          # failed sweep behind a green "no_areas" answer. The Authorization header is read from stdin so the secret
+          # never appears in the process list or logs. --max-time covers the 60 s Vercel function limit.
+          body="$(mktemp)"
+          if ! code="$(printf 'header = "Authorization: Bearer %s"\n' "$CRON_SECRET" | curl --silent --show-error \
+              --max-time 75 \
+              --config - -X POST -H "Accept: application/json" -o "$body" -w '%{http_code}' "$SWEEP_URL")"; then
+            echo "::error::Could not reach the sweep endpoint."
+            exit 1
+          fi
+          cat "$body"; echo
+          status="$(jq -r '.status // "unknown"' "$body" 2>/dev/null || echo unknown)"
+          errors="$(jq -r '[.errors[]? | "\(.code) x\(.count)"] | join(", ")' "$body" 2>/dev/null || true)"
+          inserted="$(jq -r '.observations.inserted // 0' "$body" 2>/dev/null || echo 0)"
+          encounters="$(jq -r '.encounters.started // 0' "$body" 2>/dev/null || echo 0)"
+          echo "### Net sweep: ${status} (HTTP ${code})" >> "$GITHUB_STEP_SUMMARY"
+          echo "Observations recorded: ${inserted} · new encounters: ${encounters}${errors:+ · errors: ${errors}}" >> "$GITHUB_STEP_SUMMARY"
+          case "$code:$status" in
+            200:completed|200:no_areas|200:skipped_locked|200:provider_not_configured)
+              echo "::notice::Net sweep ${status}: ${inserted} observations recorded, ${encounters} new encounters." ;;
+            200:partial)
+              echo "::warning::Net sweep partial (${errors:-some areas deferred}): ${inserted} observations recorded." ;;
+            502:failed)
+              # The aircraft provider (adsb.lol) did not answer. That is an outside outage, not a broken setup, so it is
+              # reported as a warning (visible on the run) without failing the job and sending failure emails.
+              echo "::warning::Net sweep recorded nothing: the aircraft provider did not answer (${errors:-provider error}). The next run will try again." ;;
+            *)
+              echo "::error::Net sweep endpoint answered HTTP ${code} (${status}). Check CRON_SECRET on GitHub and Vercel and /api/health."
+              exit 1 ;;
+          esac
