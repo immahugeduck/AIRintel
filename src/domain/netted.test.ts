@@ -61,7 +61,7 @@ describe("countRadiusVisits (netted-visits-v1)", () => {
 
 describe("nettedQuerySchema", () => {
   it("defaults to the 7 mile radius and 24 hours", () => {
-    expect(nettedQuerySchema.parse({ lat: "39.7", lon: "-86.1" })).toEqual({ lat: 39.7, lon: -86.1, radiusMi: 7, hours: 24 });
+    expect(nettedQuerySchema.parse({ lat: "39.7", lon: "-86.1" })).toEqual({ lat: 39.7, lon: -86.1, radiusMi: 7, hours: 24, scope: "window" });
   });
 
   it.each([{ lat: "91", lon: "0" }, { lat: "0", lon: "181" }, { lat: "0", lon: "0", radiusMi: "0.5" }, { lat: "0", lon: "0", radiusMi: "51" }, { lat: "0", lon: "0", hours: "169" }, { lat: "x", lon: "0" }])("rejects %o", (input) => {

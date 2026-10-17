@@ -64,7 +64,7 @@ export default function App() {
   const signedIn = session.status === "signed-in";
 
   const updateArea = (next: WatchArea) => { setArea(next); saveWatchArea(next); };
-  const net = useNet(signedIn, area);
+  const net = useNet(signedIn, area, updateArea);
   const openDrawer = () => { setDrawerSince(readLastOpened()); setDrawerOpen(true); };
   const closeDrawer = useCallback(() => { setDrawerOpen(false); writeLastOpened(new Date().toISOString()); }, []);
   const go = (next: View) => { setView(next); window.scrollTo({ top: 0 }); };
@@ -90,7 +90,7 @@ export default function App() {
   });
   const netted = useQuery({
     queryKey: ["netted-aircraft", latitude, longitude, radiusMi],
-    queryFn: ({ signal }) => fetchNettedAircraft({ latitude, longitude, radiusMi, hours: NETTED_DEFAULT_HOURS }, signal),
+    queryFn: ({ signal }) => fetchNettedAircraft({ latitude, longitude, radiusMi, hours: NETTED_DEFAULT_HOURS, scope: "log" }, signal),
     enabled: signedIn,
     refetchInterval: pollMs * 3,
     refetchIntervalInBackground: false,
@@ -136,7 +136,7 @@ export default function App() {
     if (session.status === "unconfigured") return { kind: "session", reason: "unconfigured", aircraft: sessionList() };
     if (session.status === "checking") return { kind: "loading" };
     if (!signedIn) return { kind: "session", reason: "signed-out", aircraft: sessionList() };
-    if (netted.data) return { kind: "ready", source: "recorded", aircraft: netted.data.aircraft, hours: netted.data.query.hours, truncated: netted.data.truncated, net: netted.data.net ?? net.status };
+    if (netted.data) return { kind: "ready", source: "recorded", aircraft: netted.data.aircraft, hours: netted.data.query.hours, truncated: netted.data.truncated, net: netted.data.net ?? net.status, lifetime: netted.data.source === "log" };
     if (netted.error instanceof AccessDeniedError) return { kind: "session", reason: "no-access", aircraft: sessionList() };
     if (netted.error instanceof AuthenticationRequiredError) return { kind: "session", reason: "signed-out", aircraft: sessionList() };
     if (netted.error instanceof ProviderNotConfiguredError) return { kind: "session", reason: "unconfigured", aircraft: sessionList() };

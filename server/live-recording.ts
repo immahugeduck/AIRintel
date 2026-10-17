@@ -1,6 +1,7 @@
 import { bearerToken, hasScope, type RateLimiter, type TokenVerifier } from "./auth.js";
 import type { Queryable } from "./db.js";
 import { ADSB_LOL_NORMALIZATION_VERSION, ADSB_LOL_PROVIDER_SCHEMA_VERSION, type LiveAircraftResult } from "./providers/adsb.js";
+import { recordEncounters, type EncounterArea } from "./encounters.js";
 import { recordObservations, type RecordResult, type RecorderObservation } from "./recorder.js";
 
 /**
@@ -46,11 +47,15 @@ export function toRecorderObservations(result: LiveAircraftResult): RecorderObse
   });
 }
 
-export async function recordLiveObservations(deps: LiveRecordingDeps | null, authorization: string | undefined, radiusNm: number, result: LiveAircraftResult): Promise<{ status: LiveRecordingStatus; result?: RecordResult }> {
+/**
+ * `area` is the caller's live view (center + radius). After the observations are recorded they also advance the
+ * caller's own encounter log (server/encounters.ts), so encounters are attributed to the signed-in account.
+ */
+export async function recordLiveObservations(deps: LiveRecordingDeps | null, authorization: string | undefined, area: EncounterArea, result: LiveAircraftResult): Promise<{ status: LiveRecordingStatus; result?: RecordResult }> {
   const token = bearerToken(authorization);
   if (!token) return { status: "not_signed_in" };
   if (!deps?.db || !deps.verifier) return { status: "unavailable" };
-  if (radiusNm > MAX_RECORDING_RADIUS_NM) return { status: "radius_too_large" };
+  if (area.radiusNm > MAX_RECORDING_RADIUS_NM) return { status: "radius_too_large" };
   const user = await deps.verifier(token);
   if (!user) return { status: "not_signed_in" };
   try {
@@ -60,8 +65,12 @@ export async function recordLiveObservations(deps: LiveRecordingDeps | null, aut
   }
   if (deps.limiter.hit(user.id) !== null) return { status: "rate_limited" };
   const db = deps.db;
-  const write = recordObservations(db, toRecorderObservations(result)).then(
-    (written) => ({ status: "recorded" as const, result: written }),
+  const input = toRecorderObservations(result);
+  const write = recordObservations(db, input).then(
+    async (written) => {
+      await recordEncounters(db, user.id, area, input, "live");
+      return { status: "recorded" as const, result: written };
+    },
     () => ({ status: "failed" as const }),
   );
   const timeout = new Promise<{ status: LiveRecordingStatus }>((resolve) => setTimeout(() => resolve({ status: "timeout" }), deps.timeoutMs ?? 6_000));

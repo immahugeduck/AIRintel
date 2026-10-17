@@ -5,6 +5,7 @@ import type { NetConfig } from "./config.js";
 import type { Queryable } from "./db.js";
 import { log, errorFields } from "./logger.js";
 import { acquireSweepLease, getSweepState, loadDueAreas, markAreasPolled, purgeOldObservations, releaseSweepLease, type SweepArea } from "./net-watch.js";
+import { recordEncounters } from "./encounters.js";
 import { toRecorderObservations } from "./live-recording.js";
 import { fetchLiveAircraft, type AdsbProviderConfig, type LiveAircraftResult, type ProviderFetchOptions } from "./providers/adsb.js";
 import { recordObservations, type RecordResult } from "./recorder.js";
@@ -13,7 +14,7 @@ import { recordObservations, type RecordResult } from "./recorder.js";
  * Always-on net sweep: loads every enabled watch area, merges overlapping provider queries, fetches REAL aircraft
  * from the provider adapter, and writes them through the existing recorder (provider identity, schema versions,
  * observed + received timestamps and dedupe-by-provider-record-id are all preserved by `toRecorderObservations` /
- * `recordObservations`). It supplies observations only; entries are still counted by `netted-visits-v1`.
+ * `recordObservations`), then advances each area owner's encounter log (server/encounters.ts, `netted-visits-v1` rule).
  */
 
 export const MAX_FETCH_RADIUS_NM = 50;
@@ -32,6 +33,8 @@ export type SweepSummary = {
   durationMs: number;
   areas: { due: number; queried: number; covered: number; deferred: number };
   observations: { fetched: number; inserted: number; duplicate: number; rejected: number };
+  /** New per-account encounters detected by this sweep (counts only). */
+  encounters: { started: number };
   errors: { code: string; count: number }[];
   retention?: { deleted: number };
 };
@@ -97,6 +100,7 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
     ok: true, status: "completed", startedAt: new Date(started).toISOString(), durationMs: 0,
     areas: { due: 0, queried: 0, covered: 0, deferred: 0 },
     observations: { fetched: 0, inserted: 0, duplicate: 0, rejected: 0 },
+    encounters: { started: 0 },
     errors: [],
   };
   const finish = (status: SweepStatus): SweepSummary => {
@@ -155,10 +159,20 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
       const recorderInput = toRecorderObservations(result);
       const totals: RecordResult = { received: 0, inserted: 0, duplicate: 0, rejected: 0 };
       let cut = false;
+      let processed = 0;
       for (let offset = 0; offset < recorderInput.length; offset += RECORD_CHUNK) {
         if (now() - started > deps.net.budgetMs + 6_000) { cut = true; break; }
         const part = await record(deps.db, recorderInput.slice(offset, offset + RECORD_CHUNK));
+        processed = Math.min(recorderInput.length, offset + RECORD_CHUNK);
         totals.received += part.received; totals.inserted += part.inserted; totals.duplicate += part.duplicate; totals.rejected += part.rejected;
+      }
+      // Credit every member area's owner with their own encounters (each measured against that user's radius).
+      if (totals.inserted + totals.duplicate > 0) {
+        const recorded = recorderInput.slice(0, processed);
+        for (const member of query.members) {
+          const written = await recordEncounters(deps.db, member.userId, { latitude: member.latitude, longitude: member.longitude, radiusNm: milesToNm(member.radiusMi) }, recorded, "sweep");
+          summary.encounters.started += written.started;
+        }
       }
       summary.observations.inserted += totals.inserted;
       summary.observations.duplicate += totals.duplicate;

@@ -3,8 +3,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { distanceNm } from "../../src/domain/geometry.js";
 import { watchAreaInputSchema } from "../../src/domain/net.js";
-import { NETTED_ALGORITHM_VERSION, countRadiusVisits, nettedQuerySchema, toNettedDto, type VisitObservation } from "../../src/domain/netted.js";
-import { VISIT_GAP_MINUTES, milesToMeters, milesToNm } from "../../src/domain/units.js";
+import { MAX_VISITS_PER_AIRCRAFT, NETTED_ALGORITHM_VERSION, countRadiusVisits, nettedQuerySchema, toNettedDto, type NettedAircraft, type VisitObservation } from "../../src/domain/netted.js";
+import { VISIT_GAP_MINUTES, milesToMeters, milesToNm, nmToMiles } from "../../src/domain/units.js";
 import { iso, type Queryable } from "../db.js";
 import type { AppVariables } from "../http.js";
 import { getWatchAreaRow, toNetStatus, upsertWatchArea, watchAreaResponse } from "../net-watch.js";
@@ -181,9 +181,13 @@ export function historyRoutes(db: Queryable) {
      * when the recorder captured them; otherwise the reception-gap rule separates visits.
      */
     async function netted() {
-      const parsed = nettedQuerySchema.safeParse({ lat: c.req.query("lat"), lon: c.req.query("lon"), radiusMi: c.req.query("radiusMi") || undefined, hours: c.req.query("hours") || undefined });
+      const parsed = nettedQuerySchema.safeParse({ lat: c.req.query("lat"), lon: c.req.query("lon"), radiusMi: c.req.query("radiusMi") || undefined, hours: c.req.query("hours") || undefined, scope: c.req.query("scope") || undefined });
       if (!parsed.success || !c.req.query("lat")?.trim() || !c.req.query("lon")?.trim()) return c.json({ error: "invalid_netted_query" }, 400);
-      const { lat, lon, radiusMi, hours } = parsed.data;
+      const { lat, lon, radiusMi, hours, scope } = parsed.data;
+      if (scope === "log") {
+        const saved = await savedLog(lat, lon, radiusMi, hours);
+        if (saved) return saved;
+      }
       const radiusNm = milesToNm(radiusMi);
       const windowEnd = new Date();
       const windowStart = new Date(windowEnd.getTime() - hours * 3_600_000);
@@ -240,6 +244,86 @@ export function historyRoutes(db: Queryable) {
         truncated,
         aircraft: summaries.map((summary) => toNettedDto(summary, typeCodes.get(summary.icao24) ?? null)),
         net,
+        source: "window",
+      });
+    }
+
+    /**
+     * The caller's saved encounter log (migration 0006): lifetime counts per aircraft plus the newest encounters,
+     * keyed by the verified JWT subject only. Returns null (caller falls back to the window view) when the log is
+     * empty or not migrated yet.
+     */
+    async function savedLog(lat: number, lon: number, radiusMi: number, hours: number) {
+      const userId = c.get("user").id;
+      const limit = 500;
+      let tallies: { icao24: string; encounter_count: number; first_encountered_at: Date; last_seen_in_radius_at: Date; closest_approach_nm: number; last_callsign: string | null; last_registration: string | null }[];
+      try {
+        ({ rows: tallies } = await db.query(
+          `select icao24, encounter_count, first_encountered_at, last_seen_in_radius_at, closest_approach_nm, last_callsign, last_registration
+             from airintel_private.user_aircraft_tallies
+            where user_id = $1::uuid and encounter_count > 0 and first_encountered_at is not null and last_seen_in_radius_at is not null
+            order by last_seen_in_radius_at desc
+            limit ${limit + 1}`,
+          [userId],
+        ));
+      } catch (error) {
+        if (error && typeof error === "object" && (error as { code?: unknown }).code === "42P01") return null;
+        throw error;
+      }
+      if (tallies.length === 0) return null;
+      const truncated = tallies.length > limit;
+      const kept = tallies.slice(0, limit);
+      const icaos = kept.map((row) => row.icao24);
+      const [encounters, types] = await Promise.all([
+        db.query<{ icao24: string; entered_at: Date; last_seen_in_radius_at: Date; closest_approach_nm: number; observation_count: number }>(
+          `select icao24, entered_at, last_seen_in_radius_at, closest_approach_nm, observation_count
+             from (select e.*, row_number() over (partition by e.icao24 order by e.entered_at desc) as rn
+                     from airintel_private.encounters e where e.user_id = $1::uuid and e.icao24 = any($2::text[])) ranked
+            where rn <= $3
+            order by icao24, entered_at desc`,
+          [userId, icaos, MAX_VISITS_PER_AIRCRAFT],
+        ),
+        db.query<{ icao24: string; type_code: string | null }>(
+          `select distinct on (a.icao24) a.icao24, nullif(trim(r.payload->>'t'), '') as type_code
+             from public.aircraft a
+             join public.aircraft_positions p on p.aircraft_id = a.id
+             join airintel_private.raw_observations r on r.position_id = p.id
+            where a.icao24 = any($1::text[]) and p.observed_at >= now() - interval '30 days' and r.payload ? 't'
+            order by a.icao24, p.observed_at desc`,
+          [icaos],
+        ).catch(() => ({ rows: [] as { icao24: string; type_code: string | null }[] })),
+      ]);
+      const visits = new Map<string, NettedAircraft["visits"]>();
+      for (const row of encounters.rows) {
+        const list = visits.get(row.icao24) ?? [];
+        list.push({ enteredAt: iso(row.entered_at)!, lastSeenInRadiusAt: iso(row.last_seen_in_radius_at)!, closestMi: nmToMiles(row.closest_approach_nm), observationCount: Math.max(1, row.observation_count) });
+        visits.set(row.icao24, list);
+      }
+      const typeCodes = new Map(types.rows.flatMap((row) => (row.type_code ? [[row.icao24, row.type_code] as const] : [])));
+      const aircraft: NettedAircraft[] = kept.map((row) => ({
+        icao24: row.icao24,
+        callsign: row.last_callsign,
+        registration: row.last_registration,
+        aircraftTypeCode: typeCodes.get(row.icao24) ?? null,
+        visitCount: row.encounter_count,
+        firstSeenAt: iso(row.first_encountered_at)!,
+        lastSeenAt: iso(row.last_seen_in_radius_at)!,
+        closestApproachMi: nmToMiles(row.closest_approach_nm),
+        visits: visits.get(row.icao24) ?? [],
+      }));
+      const windowEnd = new Date();
+      const earliest = Math.min(...kept.map((row) => row.first_encountered_at.getTime()));
+      const net = await getWatchAreaRow(db, userId).then((row) => toNetStatus(row), () => null);
+      return c.json({
+        query: { latitude: lat, longitude: lon, radiusMi, radiusNm: milesToNm(radiusMi), hours, visitGapMinutes: VISIT_GAP_MINUTES },
+        windowStart: new Date(Math.min(earliest, windowEnd.getTime())).toISOString(),
+        windowEnd: windowEnd.toISOString(),
+        receivedAt: windowEnd.toISOString(),
+        algorithmVersion: NETTED_ALGORITHM_VERSION,
+        truncated,
+        aircraft,
+        net,
+        source: "log",
       });
     }
 
