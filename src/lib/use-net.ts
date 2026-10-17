@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { NetNotMigratedError, fetchWatchArea, saveWatchArea } from "../api/net";
 import type { WatchAreaResponse } from "../domain/net";
 import { AccessDeniedError, AuthenticationRequiredError, ProviderNotConfiguredError } from "../providers/contracts";
-import type { WatchArea } from "./watch-area";
+import { defaultWatchArea, type WatchArea } from "./watch-area";
 
 export type NetControlState =
   | { kind: "signed-out" }
@@ -28,11 +28,28 @@ export function shouldAdoptServerArea(area: WatchArea, saved: { latitude: number
   return Date.parse(saved.updatedAt) > Date.parse(area.updatedAt);
 }
 
-/** True when this browser's area is newer than the account's copy and should be saved to the account. */
-export function shouldSaveBrowserArea(area: WatchArea, saved: { latitude: number; longitude: number; radiusMi: number; updatedAt: string } | null): boolean {
-  if (area.source === "default" || !area.updatedAt) return false;
+type AccountArea = { latitude: number; longitude: number; radiusMi: number; updatedAt: string };
+
+/** True when the area was chosen in this browser during the current signed-in session (not left over from before). */
+const changedThisSession = (area: WatchArea, sessionStartedAt: number) => Boolean(area.updatedAt) && Date.parse(area.updatedAt!) >= sessionStartedAt;
+
+/**
+ * True when this browser's area should be saved to the account: it was changed during this signed-in session and is
+ * newer than the account's copy. An area left in browser storage from before sign-in (possibly another person on a
+ * shared browser) is never uploaded into an account.
+ */
+export function shouldSaveBrowserArea(area: WatchArea, saved: AccountArea | null, sessionStartedAt: number): boolean {
+  if (area.source === "default" || !changedThisSession(area, sessionStartedAt)) return false;
   if (!saved) return true;
-  return Date.parse(area.updatedAt) > Date.parse(saved.updatedAt) && !sameArea(area, saved);
+  return Date.parse(area.updatedAt!) > Date.parse(saved.updatedAt) && !sameArea(area, saved);
+}
+
+/**
+ * True when the account has no saved area but this browser still holds a non-default area from before sign-in.
+ * That area is not known to belong to this account, so it is cleared back to the deployment default.
+ */
+export function shouldClearForeignArea(area: WatchArea, saved: AccountArea | null, sessionStartedAt: number): boolean {
+  return !saved && area.source !== "default" && !changedThisSession(area, sessionStartedAt);
 }
 
 /**
@@ -69,10 +86,26 @@ export function useNet(signedIn: boolean, area: WatchArea, onAdoptArea?: (next: 
     }
   };
 
-  // Load the account's area into this browser.
-  const adoptKey = signedIn && query.isSuccess && !mutation.isPending && shouldAdoptServerArea(area, saved) ? `${saved!.latitude}:${saved!.longitude}:${saved!.radiusMi}:${saved!.updatedAt}` : null;
   const latestAdopt = useRef({ saved, onAdoptArea });
   latestAdopt.current = { saved, onAdoptArea };
+  // Start of the current signed-in session; only areas chosen after it may be uploaded to the account.
+  const [sessionStartedAt, setSessionStartedAt] = useState(() => Date.now());
+  const wasSignedIn = useRef(signedIn);
+  useEffect(() => {
+    if (signedIn && !wasSignedIn.current) setSessionStartedAt(Date.now());
+    wasSignedIn.current = signedIn;
+  }, [signedIn]);
+
+  // Clear a leftover (pre-sign-in) area when the account has none, instead of copying it into the account.
+  const clearKey = signedIn && query.isSuccess && !mutation.isPending && shouldClearForeignArea(area, saved, sessionStartedAt) ? `${area.latitude}:${area.longitude}:${area.radiusMi}:${area.updatedAt}` : null;
+  useEffect(() => {
+    const adopt = latestAdopt.current.onAdoptArea;
+    if (!clearKey || !adopt) return;
+    adopt(defaultWatchArea());
+  }, [clearKey]);
+
+  // Load the account's area into this browser.
+  const adoptKey = signedIn && query.isSuccess && !mutation.isPending && shouldAdoptServerArea(area, saved) ? `${saved!.latitude}:${saved!.longitude}:${saved!.radiusMi}:${saved!.updatedAt}` : null;
   useEffect(() => {
     const { saved: current, onAdoptArea: adopt } = latestAdopt.current;
     if (!adoptKey || !current || !adopt) return;
@@ -80,7 +113,7 @@ export function useNet(signedIn: boolean, area: WatchArea, onAdoptArea?: (next: 
   }, [adoptKey]);
 
   // Save a newer browser area to the account.
-  const syncKey = signedIn && query.isSuccess && shouldSaveBrowserArea(area, saved) ? `${area.latitude}:${area.longitude}:${area.radiusMi}` : null;
+  const syncKey = signedIn && query.isSuccess && shouldSaveBrowserArea(area, saved, sessionStartedAt) ? `${area.latitude}:${area.longitude}:${area.radiusMi}` : null;
   const latest = useRef({ area, mutate: mutation.mutate, enabled: saved?.enabled ?? false });
   latest.current = { area, mutate: mutation.mutate, enabled: saved?.enabled ?? false };
   useEffect(() => {
