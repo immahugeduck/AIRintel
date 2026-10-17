@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Queryable } from "./db.js";
-import { advanceEncounters, recordEncounters, type EncounterObservation, type EncounterState } from "./encounters.js";
+import { advanceEncounters, recordEncounters, withTransaction, type EncounterObservation, type EncounterState } from "./encounters.js";
 import { countRadiusVisits } from "../src/domain/netted.js";
 import { milesToNm } from "../src/domain/units.js";
 
@@ -60,15 +60,30 @@ describe("advanceEncounters (netted-visits-v1, incremental)", () => {
 });
 
 /** Tiny in-memory model of the two 0006 tables, driven by the exact statements encounters.ts issues. */
-function memoryDb() {
+function memoryDb(options: { failOn?: (text: string) => boolean } = {}) {
   type Tally = { user_id: string; icao24: string; encounter_count: number; first_encountered_at: Date | null; last_seen_in_radius_at: Date | null; last_observed_at: Date | null; last_inside: boolean; open_encounter_id: string | null; last_callsign: string | null };
   const tallies = new Map<string, Tally>();
   const encounters = new Map<string, { id: string; user_id: string; icao24: string; observation_count: number; source: string; entered_at: string }>();
   let seq = 0;
+  let snapshot: { tallies: string; encounters: string } | null = null;
+  const log: string[] = [];
+  const revive = (json: string) => new Map((JSON.parse(json) as [string, Record<string, unknown>][]).map(([k, v]) => [k, Object.fromEntries(Object.entries(v).map(([f, x]) => [f, typeof x === "string" && /_at$/.test(f) && f !== "entered_at" ? new Date(x) : x]))]));
   const key = (user: unknown, icao: unknown) => `${String(user)}:${String(icao)}`;
   const db: Queryable = {
     query: async (text: string, p: readonly unknown[] = []) => {
       const rows = (value: unknown[]) => ({ rows: value }) as never;
+      if (text === "begin" || text === "commit" || text === "rollback") log.push(text);
+      if (text === "begin") { snapshot = { tallies: JSON.stringify([...tallies]), encounters: JSON.stringify([...encounters]) }; return rows([]); }
+      if (text === "commit") { snapshot = null; return rows([]); }
+      if (text === "rollback") {
+        if (snapshot) {
+          tallies.clear(); for (const [k, v] of revive(snapshot.tallies)) tallies.set(k, v as never);
+          encounters.clear(); for (const [k, v] of JSON.parse(snapshot.encounters) as [string, never][]) encounters.set(k, v);
+        }
+        snapshot = null;
+        return rows([]);
+      }
+      if (options.failOn?.(text)) throw Object.assign(new Error("injected failure"), { code: "08006" });
       if (text.includes("select icao24, last_observed_at")) return rows([...tallies.values()].filter((t) => t.user_id === p[0] && (p[1] as string[]).includes(t.icao24)));
       if (text.includes("insert into airintel_private.user_aircraft_tallies")) {
         if (tallies.has(key(p[0], p[1]))) return rows([]);
@@ -100,7 +115,7 @@ function memoryDb() {
       throw new Error(`unexpected statement: ${text}`);
     },
   };
-  return { db, tallies, encounters };
+  return { db, tallies, encounters, log };
 }
 
 describe("recordEncounters (per-account log + lifetime counter)", () => {
@@ -147,5 +162,44 @@ describe("recordEncounters (per-account log + lifetime counter)", () => {
   it("never throws: a database failure is reported as skipped", async () => {
     const failing: Queryable = { query: async () => { throw Object.assign(new Error("boom"), { code: "57014" }); } };
     await expect(recordEncounters(failing, userA, area, [inside(0)], "live")).resolves.toMatchObject({ skipped: 1 });
+  });
+
+  it("writes each aircraft's claim, encounters and tally in one transaction", async () => {
+    const { db, log } = memoryDb();
+    await recordEncounters(db, userA, area, [inside(0)], "live");
+    expect(log).toEqual(["begin", "commit"]);
+  });
+
+  it("rolls the claim back when a later write fails, so a retry still records the encounter", async () => {
+    let fail = true;
+    const memory = memoryDb({ failOn: (text) => fail && text.includes("set encounter_count = encounter_count + $3") });
+    const first = await recordEncounters(memory.db, userA, area, [inside(0), inside(1)], "live");
+    expect(first.skipped).toBe(1);
+    expect(memory.log).toEqual(["begin", "rollback"]);
+    expect(memory.tallies.size).toBe(0); // watermark not advanced
+    expect(memory.encounters.size).toBe(0); // no orphan encounter
+    fail = false;
+    const retry = await recordEncounters(memory.db, userA, area, [inside(0), inside(1)], "sweep");
+    expect(retry.started).toBe(1);
+    expect(memory.tallies.get(`${userA}:abc123`)?.encounter_count).toBe(1);
+  });
+});
+
+describe("withTransaction", () => {
+  it("uses a dedicated pooled client, commits, and releases it", async () => {
+    const statements: string[] = [];
+    let released: unknown = "not released";
+    const client = { query: async (text: string) => { statements.push(text); return { rows: [] } as never; }, release: (error?: Error) => { released = error; } };
+    const pool = { query: async () => { throw new Error("must not use the pool directly"); }, connect: async () => client } as unknown as Queryable;
+    await withTransaction(pool, (tx) => tx.query("select 1"));
+    expect(statements).toEqual(["begin", "select 1", "commit"]);
+    expect(released).toBeUndefined();
+  });
+
+  it("rolls back and rethrows when the work fails", async () => {
+    const statements: string[] = [];
+    const db: Queryable = { query: async (text: string) => { statements.push(text); return { rows: [] } as never; } };
+    await expect(withTransaction(db, async () => { throw new Error("boom"); })).rejects.toThrow("boom");
+    expect(statements).toEqual(["begin", "rollback"]);
   });
 });

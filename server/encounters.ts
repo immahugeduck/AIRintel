@@ -11,9 +11,10 @@ import { errorFields, log } from "./logger.js";
  * for that user and aircraft, when the previous observation was outside the radius, or when more than
  * VISIT_GAP_MINUTES passed since the previous observation. Otherwise it continues the open encounter.
  *
- * Writes are guarded per (user, aircraft) by `last_observed_at`: the tally row is claimed with a compare-and-set
- * before any encounter is written, so overlapping writers (two tabs, live + sweep) never double count, and
- * observations at or before the processed watermark are ignored (idempotent replays).
+ * Writes are guarded per (user, aircraft) by `last_observed_at`: inside one transaction the tally row is claimed with
+ * a compare-and-set (which also row-locks it until commit), then encounters and the tally are written. Overlapping
+ * writers (two tabs, live + sweep) therefore never double count or see a half-written tally, a failed write rolls
+ * back the claim, and observations at or before the processed watermark are ignored (idempotent replays).
  */
 
 export type EncounterArea = { latitude: number; longitude: number; radiusNm: number };
@@ -128,7 +129,9 @@ export async function recordEncounters(db: Queryable, userId: string, area: Enco
       // Aircraft never seen inside this user's radius get no rows at all.
       if (!advance.next || (!tally && advance.started.length === 0)) continue;
       try {
-        await applyAdvance(db, userId, icao24, area, source, tally, state, advance);
+        // Claim + encounter writes + tally update commit together or not at all, so a failed write never advances
+        // the watermark past observations whose encounters were not saved (the next batch retries them).
+        await withTransaction(db, (tx) => applyAdvance(tx, userId, icao24, area, source, tally, state, advance));
         result.aircraft += 1;
         result.started += advance.started.length;
         if (advance.continued) result.continued += 1;
@@ -145,6 +148,31 @@ export async function recordEncounters(db: Queryable, userId: string, area: Enco
 }
 
 class ClaimLost extends Error {}
+
+type PoolLike = { connect: () => Promise<Queryable & { release: (error?: Error) => void }> };
+const isPool = (db: Queryable): db is Queryable & PoolLike => typeof (db as Partial<PoolLike>).connect === "function";
+
+/**
+ * Runs `work` in one database transaction. A pg Pool hands out a dedicated client (statements on the pool itself
+ * may land on different connections); any other Queryable (a single client, test doubles) is used directly.
+ */
+export async function withTransaction<T>(db: Queryable, work: (tx: Queryable) => Promise<T>): Promise<T> {
+  const client = isPool(db) ? await db.connect() : null;
+  const tx: Queryable = client ?? db;
+  let failure: Error | undefined;
+  try {
+    await tx.query("begin");
+    const result = await work(tx);
+    await tx.query("commit");
+    return result;
+  } catch (error) {
+    await tx.query("rollback").catch((rollbackError: unknown) => { failure = rollbackError instanceof Error ? rollbackError : new Error("rollback_failed"); });
+    throw error;
+  } finally {
+    // A connection whose rollback failed is discarded instead of being returned to the pool.
+    client?.release(failure);
+  }
+}
 
 async function applyAdvance(db: Queryable, userId: string, icao24: string, area: EncounterArea, source: EncounterSource, tally: TallyRow | null, state: EncounterState, advance: EncounterAdvance) {
   const next = advance.next!;
