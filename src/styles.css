@@ -564,3 +564,6 @@ input[type="range"] { width: 100%; min-height: var(--tap); accent-color: var(--a
 }
 
 .link-button { min-height: var(--tap); padding: 0 .2rem; border: 0; background: transparent; color: var(--sky); font-weight: 600; font-size: .9rem; text-decoration: underline; text-underline-offset: 3px; }
+
+.netted-export { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.4rem; }
+.netted-export .button { min-height: 44px; padding-inline: 0.8rem; }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Circle, CircleMarker, Marker, MapContainer, Polyline, TileLayer, Tooltip, ZoomControl, useMap } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
@@ -132,6 +132,22 @@ export function LiveMap({ id, settingsOpen, onSettingsOpenChange, center, radius
   const providerTracks = segmentTracksByProvider(trackPoints);
   const ordered = [...trackPoints].sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt));
   const replayPoint = ordered[Math.min(replayIndex, Math.max(0, ordered.length - 1))];
+  // A token/style saved in this browser overrides the deployed one. If its tiles keep failing
+  // (revoked token, deleted style), drop it and fall back to the deployed config so the map isn't blank.
+  const tileErrors = useRef(0);
+  const onTileError = () => {
+    tileErrors.current += 1;
+    if (tileErrors.current < 4) return;
+    tileErrors.current = 0;
+    const fallback = envConfig();
+    if (fallback && (fallback.accessToken !== mapboxConfig?.accessToken || fallback.style !== mapboxConfig?.style)) {
+      try { window.localStorage.removeItem(MAPBOX_STORAGE_KEY); } catch { /* optional */ }
+      setMapboxConfig(fallback);
+      setSetupError("Your saved map settings stopped loading tiles, so AIRIntel switched back to the default basemap.");
+    } else {
+      setSetupError("Map tiles are failing to load. Check the Mapbox token and style in Map settings.");
+    }
+  };
   const configured = mapboxConfig !== null;
   const tileUrl = configured
     ? `https://api.mapbox.com/styles/v1/${mapboxConfig.style}/tiles/512/{z}/{x}/{y}@2x?access_token=${encodeURIComponent(mapboxConfig.accessToken)}`
@@ -196,7 +212,9 @@ export function LiveMap({ id, settingsOpen, onSettingsOpenChange, center, radius
           <ZoomControl position="bottomright" />
           {tileUrl ? (
             <TileLayer
+              key={tileUrl}
               url={tileUrl}
+              eventHandlers={{ tileerror: onTileError }}
               tileSize={512}
               zoomOffset={-1}
               maxZoom={22}

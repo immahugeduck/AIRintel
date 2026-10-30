@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ProfileNotFoundError, fetchAircraftProfile } from "../api/profile";
 import type { NetStatus } from "../domain/net";
+import { downloadText, nettedFilename, nettedToCsv, nettedToJson } from "../lib/netted-export";
 import type { NettedAircraft, NettedVisit } from "../domain/netted";
 import { formatLastSeen } from "../domain/units";
 import { AccessDeniedError, AuthenticationRequiredError, ProviderNotConfiguredError } from "../providers/contracts";
@@ -103,7 +104,13 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
           <p className="eyebrow">Entered my {formatRadius(radiusMi)} radius{state.kind === "ready" ? (state.lifetime ? " · all time, saved to your account" : ` · last ${state.hours >= 48 ? `${Math.round(state.hours / 24)} days` : `${state.hours} h`}`) : state.kind === "session" ? " · this visit" : ""}</p>
           <h2 id={`netted-heading${drawer ? "-drawer" : ""}`}>Netted aircraft <span className="count-badge" aria-label={`${aircraft.length} aircraft`}>{aircraft.length}</span></h2>
         </div>
-        {aircraft.length > 0 && <span className="hint">{totalVisits} {totalVisits === 1 ? "entry" : "entries"}</span>}
+        {aircraft.length > 0 && (
+          <div className="netted-export">
+            <span className="hint">{totalVisits} {totalVisits === 1 ? "entry" : "entries"}</span>
+            <button type="button" className="button button-ghost" aria-label="Export netted list as CSV" onClick={() => downloadText(nettedFilename("csv"), nettedToCsv(aircraft), "text/csv;charset=utf-8")}>CSV</button>
+            <button type="button" className="button button-ghost" aria-label="Export netted list as JSON" onClick={() => downloadText(nettedFilename("json"), nettedToJson(aircraft, { radiusMi, scope: lifetime ? "all-time log" : state.kind === "ready" ? `last ${state.hours} h` : "this visit" }), "application/json")}>JSON</button>
+          </div>
+        )}
       </header>
 
       {net && (
