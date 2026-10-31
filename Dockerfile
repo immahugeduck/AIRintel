@@ -1,7 +1,7 @@
 # ==========================================
 # Stage 1: Build the Vite static assets
 # ==========================================
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 
 WORKDIR /app
 
