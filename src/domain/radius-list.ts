@@ -5,6 +5,7 @@ export type RadiusRow = {
   icao24: string;
   callsign: string | null;
   registration: string | null;
+  aircraftTypeCode: string | null;
   distanceNm: number;
   altitudeFt: number | null;
   onGround: boolean | null;
@@ -22,6 +23,7 @@ type Candidate = {
   icao24: string;
   callsign?: string | null | undefined;
   registration?: string | null | undefined;
+  aircraftTypeCode?: string | null | undefined;
   latitude: number;
   longitude: number;
   altitudeFt?: number | null | undefined;
@@ -51,6 +53,7 @@ export function buildRadiusRows(live: readonly Candidate[], recorded: readonly C
       icao24: key,
       callsign: item.callsign?.trim() || previous?.callsign || null,
       registration: item.registration?.trim() || previous?.registration || null,
+      aircraftTypeCode: item.aircraftTypeCode?.trim() || previous?.aircraftTypeCode || null,
       distanceNm: distance,
       altitudeFt: item.altitudeFt ?? null,
       onGround: item.onGround ?? null,

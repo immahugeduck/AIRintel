@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export const UNMATCHED_REGISTRY_NOTICE = "No matched FAA registry record is available. Provider-reported registration and type do not establish an FAA registered owner or a flight operator.";
+
 const utcTimestamp = z.iso.datetime({ offset: true });
 const evidenceLevelSchema = z.enum(["observed", "calculated", "unknown"]);
 
