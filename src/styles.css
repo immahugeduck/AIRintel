@@ -366,6 +366,7 @@ input[type="range"] { width: 100%; min-height: var(--tap); accent-color: var(--a
 .selected-head { display: flex; justify-content: space-between; align-items: flex-start; gap: .5rem; }
 .selected-head h2 { font-size: 1.2rem; }
 .selected-facts { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.selected-identity { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .selected-actions { display: flex; gap: .5rem; }
 .selected-actions .button { flex: 1; }
 

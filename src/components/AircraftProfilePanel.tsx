@@ -1,4 +1,4 @@
-import type { AircraftProfile } from "../domain/profile";
+import { UNMATCHED_REGISTRY_NOTICE, type AircraftProfile } from "../domain/profile";
 
 type Props = { profile: AircraftProfile };
 type EvidenceField = AircraftProfile["registryMatch"]["manufacturer"];
@@ -31,6 +31,8 @@ export function AircraftProfilePanel({ profile }: Props) {
         </div>
         <span className={`match-badge ${profile.registryMatch.status}`}>{profile.registryMatch.status.replaceAll("_", " ")}</span>
       </div>
+      {profile.observedRegistration && <p className="fine-print">Registration (provider-reported): <span className="mono">{profile.observedRegistration}</span></p>}
+      {profile.registryMatch.status === "unmatched" && <p className="notice notice-warn" role="status">{UNMATCHED_REGISTRY_NOTICE}</p>}
       <div className="profile-grid">
         <article>
           <h3>FAA registration record</h3>

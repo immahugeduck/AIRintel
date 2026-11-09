@@ -14,6 +14,8 @@ type Props = {
 /** Compact selected-aircraft card: docked above the tab bar on phones, floating over the map on desktop. */
 export function SelectedDock({ icao24, row, netted, onClose, onShowMap, onDetails }: Props) {
   const callsign = row?.callsign ?? netted?.callsign ?? null;
+  const registration = row?.registration ?? netted?.registration ?? null;
+  const aircraftTypeCode = row?.aircraftTypeCode ?? netted?.aircraftTypeCode ?? null;
   return (
     <aside className="selected-dock" aria-label="Selected aircraft">
       <div className="selected-head">
@@ -23,6 +25,10 @@ export function SelectedDock({ icao24, row, netted, onClose, onShowMap, onDetail
         </div>
         <button type="button" className="icon-button" aria-label="Clear selection" onClick={onClose}>✕</button>
       </div>
+      <dl className="selected-facts selected-identity">
+        <div><dt>Registration (provider-reported)</dt><dd className="mono">{registration ?? "Unknown"}</dd></div>
+        <div><dt>Type (provider-reported)</dt><dd className="mono">{aircraftTypeCode ?? "Unknown"}</dd></div>
+      </dl>
       {row ? (
         <dl className="selected-facts">
           <div><dt>Distance</dt><dd className="mono">{formatDistanceMi(row.distanceNm)}</dd></div>

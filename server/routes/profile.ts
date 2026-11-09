@@ -58,7 +58,7 @@ export function profileRoutes(db: Queryable) {
       const record = matchResult.rows[0] ?? null;
       const effectiveAt = record ? `${record.snapshot_date}T00:00:00Z` : null;
       const sourced = (value: string | null, status = "available", limitations: string[] = []) => record
-        ? { value, evidenceLevel: value == null ? "unknown" : "observed", status: value == null ? "unknown" : status, source: "FAA Releasable Aircraft Database", sourceRecordId: record.record_id, sourceEffectiveAt: effectiveAt, matchMethod: record.match_method, limitations }
+        ? { value, evidenceLevel: value == null ? "unknown" : "observed", status: value == null && status === "available" ? "unknown" : status, source: "FAA Releasable Aircraft Database", sourceRecordId: record.record_id, sourceEffectiveAt: effectiveAt, matchMethod: record.match_method, limitations }
         : unknownField();
       const ownerIsDisplayable = record?.owner_visibility === "displayable_entity" && record.registrant_kind !== "individual";
       const ownerStatus = record?.owner_visibility === "withheld" || record?.owner_visibility === "individual_redacted" ? "withheld_or_unavailable" : "unknown";

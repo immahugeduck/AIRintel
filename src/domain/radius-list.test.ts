@@ -28,3 +28,13 @@ describe("buildRadiusRows", () => {
     expect(rows[0]!.distanceNm).toBeCloseTo(2, 2);
   });
 });
+
+// Synthetic identity vectors only; never presented as real aircraft.
+describe("provider identity in radius rows", () => {
+  it("preserves provider-reported type alongside registration", () => {
+    const [row] = buildRadiusRows([
+      { icao24: "abcdef", registration: "N99ZZ", aircraftTypeCode: "TEST", latitude: 1, longitude: 2, observedAt: "2026-11-08T12:00:00Z" },
+    ], [], { latitude: 1, longitude: 2 }, 7);
+    expect(row).toMatchObject({ registration: "N99ZZ", aircraftTypeCode: "TEST" });
+  });
+});
