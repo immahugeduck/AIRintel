@@ -202,7 +202,7 @@ describe("runSweep with a stubbed provider and database", () => {
     expect(summary).toMatchObject({ ok: true, status: "completed", areas: { due: 1, queried: 1, covered: 0, deferred: 0 }, observations: { fetched: 2, inserted: 2, duplicate: 0, rejected: 0 }, errors: [] });
     const recorded = stub.calls.filter((call) => call.text.includes("record_aircraft_observation")).map((call) => JSON.parse(String(call.params?.[0])));
     expect(recorded).toHaveLength(2);
-    expect(recorded[0]).toMatchObject({ provider: "adsb_lol", providerSchemaVersion: "adsb_lol/v2", normalizationVersion: "airintel-adsb-lol-normalize-1", icao24: "abc123", raw: { hex: "abc123" } });
+    expect(recorded[0]).toMatchObject({ provider: "adsb_lol", providerSchemaVersion: "adsb_lol/v2", normalizationVersion: "airintel-adsb-lol-normalize-2", icao24: "abc123", raw: { hex: "abc123" } });
     expect(recorded[0].observedAt).toBe(new Date(NOW - 1000).toISOString());
     expect(recorded[0].receivedAt).toBeTruthy();
     expect(recorded[0].dedupeKey).toBe(`adsb_lol:record:abc123:${new Date(NOW - 1000).toISOString()}`);

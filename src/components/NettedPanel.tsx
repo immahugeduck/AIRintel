@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { ProfileNotFoundError, fetchAircraftProfile } from "../api/profile";
 import type { NetStatus } from "../domain/net";
-import { UNMATCHED_REGISTRY_NOTICE } from "../domain/profile";
+import { registryAvailabilityNotice } from "../domain/profile";
 import { downloadText, nettedFilename, nettedToCsv, nettedToJson } from "../lib/netted-export";
 import type { NettedAircraft, NettedVisit } from "../domain/netted";
 import { formatLastSeen } from "../domain/units";
@@ -193,7 +193,7 @@ function AircraftDescription({ item, enabled }: { item: NettedAircraft; enabled:
         : profile.error instanceof ProviderNotConfiguredError ? "Registry profiles are not configured for this deployment."
           : profile.error instanceof ProfileNotFoundError ? "No registry profile is recorded for this aircraft yet."
             : profile.isError ? "Registry profile unavailable right now."
-              : registry?.status === "unmatched" ? UNMATCHED_REGISTRY_NOTICE : null;
+              : registry ? registryAvailabilityNotice(registry) : null;
   return (
     <>
       <dl className="description-grid">

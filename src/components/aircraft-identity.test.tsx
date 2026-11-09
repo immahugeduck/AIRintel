@@ -34,6 +34,19 @@ describe("aircraft identity presentation", () => {
     const html = renderToStaticMarkup(<AircraftProfilePanel profile={{ ...profile, registryMatch: { ...profile.registryMatch, status: "confirmed" } }} />);
     expect(html).not.toContain("No matched FAA registry record is available");
   });
+  it("distinguishes a missing published source from an aircraft with no exact match", () => {
+    const html = renderToStaticMarkup(<AircraftProfilePanel profile={{ ...profile, registryMatch: { ...profile.registryMatch, unavailableReason: "no_published_snapshot" } }} />);
+    expect(html).toContain("No published FAA registry snapshot is available");
+    expect(html).toContain("N99ZZ");
+  });
+  it("explains when retained identity provenance is unavailable", () => {
+    const html = renderToStaticMarkup(<AircraftProfilePanel profile={{ ...profile, registryMatch: { ...profile.registryMatch, unavailableReason: "identity_unverified" } }} />);
+    expect(html).toContain("ICAO identity provenance is unavailable");
+  });
+  it("warns that conflicting registry evidence is withheld instead of displaying an owner", () => {
+    const html = renderToStaticMarkup(<AircraftProfilePanel profile={{ ...profile, registryMatch: { ...profile.registryMatch, status: "conflict", unavailableReason: "conflict" } }} />);
+    expect(html).toContain("Conflicting FAA identity evidence");
+  });
   it("explains missing registry evidence instead of silently presenting all fields as unknown", () => {
     const html = renderToStaticMarkup(<AircraftProfilePanel profile={profile} />);
     expect(html).toContain("No matched FAA registry record is available");

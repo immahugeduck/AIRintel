@@ -1,4 +1,4 @@
-import { UNMATCHED_REGISTRY_NOTICE, type AircraftProfile } from "../domain/profile";
+import { registryAvailabilityNotice, type AircraftProfile } from "../domain/profile";
 
 type Props = { profile: AircraftProfile };
 type EvidenceField = AircraftProfile["registryMatch"]["manufacturer"];
@@ -22,6 +22,7 @@ function Field({ label, field }: { label: string; field: EvidenceField }) {
 }
 
 export function AircraftProfilePanel({ profile }: Props) {
+  const registryNotice = registryAvailabilityNotice(profile.registryMatch);
   return (
     <section className="profile-panel" aria-labelledby="profile-heading">
       <div className="panel-heading">
@@ -32,7 +33,7 @@ export function AircraftProfilePanel({ profile }: Props) {
         <span className={`match-badge ${profile.registryMatch.status}`}>{profile.registryMatch.status.replaceAll("_", " ")}</span>
       </div>
       {profile.observedRegistration && <p className="fine-print">Registration (provider-reported): <span className="mono">{profile.observedRegistration}</span></p>}
-      {profile.registryMatch.status === "unmatched" && <p className="notice notice-warn" role="status">{UNMATCHED_REGISTRY_NOTICE}</p>}
+      {registryNotice && <p className="notice notice-warn" role="status">{registryNotice}</p>}
       <div className="profile-grid">
         <article>
           <h3>FAA registration record</h3>

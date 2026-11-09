@@ -1,12 +1,14 @@
 import { z } from "zod";
 
 const DEFAULT_ADSB_LOL_BASE = "https://api.adsb.lol";
+const NON_ICAO_TYPES = new Set(["adsb_other", "adsr_other", "tisb_other", "tisb_trackfile"]);
 
 const altitudeValue = z.union([z.number().finite(), z.literal("ground")]).optional();
 
 const adsbLolAircraftSchema = z
   .object({
     hex: z.string().trim().min(1),
+    type: z.string().trim().toLowerCase().optional(),
     lat: z.number().finite().optional(),
     lon: z.number().finite().optional(),
     alt_baro: altitudeValue,
@@ -72,7 +74,7 @@ export type LiveAircraftResult = {
 
 /** Provider schema / normalization identities stored with every recorded adsb.lol observation. */
 export const ADSB_LOL_PROVIDER_SCHEMA_VERSION = "adsb_lol/v2";
-export const ADSB_LOL_NORMALIZATION_VERSION = "airintel-adsb-lol-normalize-1";
+export const ADSB_LOL_NORMALIZATION_VERSION = "airintel-adsb-lol-normalize-2";
 
 export function resolveAdsbConfig(env: Record<string, string | undefined> = process.env): AdsbProviderConfig | null {
   // Default to the documented public adsb.lol feed so same-origin Vercel previews can load live aircraft
@@ -106,7 +108,9 @@ function altitudeFt(value: unknown): number | null {
 }
 
 function normalizeIcao24(hex: string): string | null {
-  const normalized = hex.trim().toLowerCase().replace(/^~/u, "");
+  // readsb prefixes non-ICAO addresses with ~. Stripping it would merge a separate
+  // identifier namespace into real ICAO24 records and could attach the wrong FAA owner.
+  const normalized = hex.trim().toLowerCase();
   return /^[0-9a-f]{6}$/u.test(normalized) ? normalized : null;
 }
 
@@ -119,6 +123,7 @@ export function normalizeAdsbLolAircraft(raw: unknown, receivedAtMs: number, pro
   const parsed = adsbLolAircraftSchema.safeParse(raw);
   if (!parsed.success) return null;
   const row = parsed.data;
+  if (row.type && NON_ICAO_TYPES.has(row.type)) return null;
   if (typeof row.lat !== "number" || typeof row.lon !== "number") return null;
   const icao24 = normalizeIcao24(row.hex);
   if (!icao24) return null;
