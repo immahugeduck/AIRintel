@@ -76,3 +76,19 @@ Status: **approved for the live `/aircraft-nearby` gateway** (public community f
 | AIRIntel env | `ADSB_PROVIDER=adsb_lol` (default when unset). `ADSB_PROVIDER=off` disables. `ADSB_API_BASE_URL` optional override |
 
 OpenSky and keyed commercial ADS-B products remain gated until their rows in this document are completed.
+
+
+### ICAO identity namespace guard (normalization v2)
+
+readsb documents `~`-prefixed `hex` addresses and `adsb_other`, `adsr_other`,
+`tisb_other`, and `tisb_trackfile` types as non-ICAO identifiers. AIRIntel's current
+storage contract supports only six-digit ICAO24 identifiers, so these rows are
+excluded rather than stripping the prefix and conflating them with registered
+aircraft. This is an unsupported namespace, not proof that an aircraft has no
+registration. Source: https://github.com/wiedehopf/readsb/blob/dev/README-json.md.
+
+Normalization v2 applies to new observations only. No stored observations are
+rewritten. Registry resolution withholds facts when retained raw evidence shows
+an identity was conflated, and requires retained ICAO evidence or an existing
+verified exact match before automatic enrichment. Expired raw evidence is not
+reconstructed or invented.

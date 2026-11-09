@@ -3,16 +3,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { iso, type Queryable } from "../db.js";
 import { percentile, type AppVariables } from "../http.js";
+import { lookupCurrentRegistry } from "../registry.js";
 
 const icaoSchema = z.string().trim().toLowerCase().regex(/^[0-9a-f]{6}$/);
 
 const unknownField = (source = "FAA registry") => ({ value: null, evidenceLevel: "unknown", status: "unknown", source, sourceRecordId: null, sourceEffectiveAt: null, matchMethod: null, limitations: ["No time-applicable source record is available."] });
-
-type RegistryRow = {
-  match_status: string; match_method: string; limitations: string[]; manual_review_status: string;
-  record_id: string; snapshot_date: string; n_number: string; manufacturer_name: string | null; model_name: string | null; serial_number: string | null;
-  registration_status: string | null; registrant_display_name: string | null; registrant_kind: string | null; owner_visibility: string;
-};
 
 export function profileRoutes(db: Queryable) {
   const app = new Hono<{ Variables: AppVariables }>();
@@ -31,15 +26,7 @@ export function profileRoutes(db: Queryable) {
       const windowEnd = new Date();
       const windowStart = new Date(windowEnd.getTime() - 90 * 86_400_000);
       const [matchResult, operatorResult, positionResult] = await Promise.all([
-        db.query<RegistryRow>(
-          `select m.match_status, m.match_method, m.limitations, m.manual_review_status,
-                  r.id as record_id, r.snapshot_date::text as snapshot_date, r.n_number, r.manufacturer_name, r.model_name, r.serial_number,
-                  r.registration_status, r.registrant_display_name, r.registrant_kind, r.owner_visibility
-             from public.aircraft_registry_matches m join public.aircraft_registry_records r on r.id = m.registry_record_id
-            where m.aircraft_id = $1 and m.match_status <> 'conflict'
-            order by m.matched_at desc limit 1`,
-          [aircraft.id],
-        ),
+        lookupCurrentRegistry(db, aircraft, windowEnd),
         db.query<{ operator_name: string; source_url: string; source_effective_at: Date | null; limitations: string[] }>(
           `select operator_name, source_url, source_effective_at, limitations from public.aircraft_operator_associations
             where aircraft_id = $1 and association_status = 'documented' and review_status = 'verified'
@@ -55,8 +42,8 @@ export function profileRoutes(db: Queryable) {
         ),
       ]);
 
-      const record = matchResult.rows[0] ?? null;
-      const effectiveAt = record ? `${record.snapshot_date}T00:00:00Z` : null;
+      const record = matchResult.record;
+      const effectiveAt = matchResult.snapshotEffectiveAt;
       const sourced = (value: string | null, status = "available", limitations: string[] = []) => record
         ? { value, evidenceLevel: value == null ? "unknown" : "observed", status: value == null && status === "available" ? "unknown" : status, source: "FAA Releasable Aircraft Database", sourceRecordId: record.record_id, sourceEffectiveAt: effectiveAt, matchMethod: record.match_method, limitations }
         : unknownField();
@@ -107,7 +94,8 @@ export function profileRoutes(db: Queryable) {
         firstObservedAt: iso(aircraft.first_seen_at),
         lastObservedAt: iso(aircraft.last_seen_at),
         registryMatch: {
-          status: record?.match_status ?? "unmatched",
+          status: matchResult.status,
+          unavailableReason: matchResult.unavailableReason,
           method: record?.match_method ?? null,
           snapshotEffectiveAt: effectiveAt,
           nNumber: record ? sourced(record.n_number) : unknownField(),

@@ -69,6 +69,7 @@ export const aircraftProfileSchema = z.object({
   lastObservedAt: utcTimestamp,
   registryMatch: z.object({
     status: matchStatusSchema,
+    unavailableReason: z.enum(["no_published_snapshot", "no_exact_match", "identity_unverified", "conflict"]).nullable().optional(),
     method: z.string().nullable(),
     snapshotEffectiveAt: utcTimestamp.nullable(),
     nNumber: evidenceFieldSchema,
@@ -91,6 +92,15 @@ export const aircraftProfileSchema = z.object({
 });
 
 export type AircraftProfile = z.infer<typeof aircraftProfileSchema>;
+
+/** Distinguish source availability from an actual aircraft match without guessing identity. */
+export function registryAvailabilityNotice(match: Pick<AircraftProfile["registryMatch"], "status" | "unavailableReason">): string | null {
+  if (match.status === "conflict") return "Conflicting FAA identity evidence requires review. Registry facts are withheld rather than choosing a potentially incorrect aircraft or owner.";
+  if (match.status !== "unmatched") return null;
+  if (match.unavailableReason === "identity_unverified") return "ICAO identity provenance is unavailable in retained observations. Automatic FAA enrichment is withheld until the identity can be verified.";
+  if (match.unavailableReason === "no_published_snapshot") return "No published FAA registry snapshot is available for this deployment. Registry enrichment requires a validated, published source; live provider identifiers are shown separately.";
+  return UNMATCHED_REGISTRY_NOTICE;
+}
 
 export function normalizeNNumber(value: string): string {
   const normalized = value.trim().toUpperCase().replace(/[\s-]/g, "");

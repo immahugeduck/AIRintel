@@ -136,3 +136,14 @@ describe("fetchLiveAircraft resilience (stubbed transport)", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 });
+
+// Synthetic identity namespace vectors only; never real ADS-B records.
+describe("non-ICAO identity isolation", () => {
+  it("does not turn a tilde-prefixed non-ICAO address into a real ICAO24", () => {
+    expect(normalizeAdsbLolAircraft({ hex: "~ABCDEF", lat: 1, lon: 2 }, Date.now())).toBeNull();
+    expect(normalizeAdsbLolAircraft({ hex: "ABCDEF", lat: 1, lon: 2 }, Date.now())?.icao24).toBe("abcdef");
+  });
+  it.each(["adsb_other", "adsr_other", "tisb_other", "tisb_trackfile", " TISB_OTHER "])("does not treat explicit %s identifiers as registered aircraft", (type) => {
+    expect(normalizeAdsbLolAircraft({ hex: "abcdef", type, lat: 1, lon: 2 }, Date.now())).toBeNull();
+  });
+});

@@ -33,3 +33,26 @@ Statistics are grouped by provider, cover an explicit UTC window, include only o
 - Implement transactional stage/publish/match processing, make unresolved conflicts dominant, and select only published time-applicable FAA snapshots.
 - Move per-provider statistics into deterministic SQL aggregation without mixing altitude bases or globally biasing samples.
 - Complete keyboard, screen-reader, and responsive-layout review against real authorized data.
+
+
+## Read-only resolution improvement (November 8, 2026)
+
+The profile API can now resolve exact Mode-S matches without precomputed match
+rows, using only the latest published, non-future FAA snapshot. This does not
+import or publish data, persist matches, or complete the deployment gates above.
+An absent record in the latest snapshot never falls back to an older owner.
+Unresolved conflicts, rejected decisions, duplicate exact matches, mismatched
+registration/Mode-S evidence, and retained non-ICAO namespace contamination fail
+closed. Automatic matching also needs retained ICAO provenance or a verified
+existing exact match. Public owner/natural-person redaction rules still apply.
+
+The optional `registryMatch.unavailableReason` distinguishes no published source,
+no exact match, missing identity provenance, and conflicts; older API responses
+remain accepted. Tests exercise the actual registry migration and SQL inside an
+ephemeral PGlite PostgreSQL instance containing labeled synthetic vectors only.
+Neon Auth/role/grant integration still requires the separate throwaway-branch tests.
+
+The runtime database role needs SELECT access to import-run metadata and retained
+raw observations, in addition to its existing profile tables. No role/grant changes
+are made by this patch. Production population and signed-in profile behavior have
+not been verified, and no real database has been populated or modified.
