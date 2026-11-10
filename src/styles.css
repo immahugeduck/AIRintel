@@ -583,3 +583,12 @@ input[type="range"] { width: 100%; min-height: var(--tap); accent-color: var(--a
 .pattern-reason-list li.is-raise .pattern-weight { color: var(--warn); }
 .pattern-reason-list li.is-lower .pattern-weight { color: var(--signal); }
 .evidence-tag { margin-left: .3rem; padding: 0 .35rem; border-radius: 4px; border: 1px solid rgba(138, 151, 166, .35); font-size: .65rem; letter-spacing: .03em; opacity: .85; }
+
+/* Follow me + control circles */
+.follow-row { margin-top: 0.75rem; }
+.control-compare { width: 100%; border-collapse: collapse; margin: 0.5rem 0 0.75rem; }
+.control-compare caption { text-align: left; padding-bottom: 0.25rem; }
+.control-compare th, .control-compare td { padding: 0.4rem 0.25rem; border-top: 1px solid var(--border); text-align: left; vertical-align: middle; font-weight: 500; }
+.control-compare td.mono { text-align: right; width: 4rem; }
+.control-compare td:last-child { width: 1%; white-space: nowrap; }
+.control-compare th .fine-print { display: block; font-weight: 400; overflow-wrap: anywhere; }

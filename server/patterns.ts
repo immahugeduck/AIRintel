@@ -2,6 +2,7 @@ import { distanceNm } from "../src/domain/geometry.js";
 import type { NettedAircraft } from "../src/domain/netted.js";
 import { assessPattern, type PatternAssessment, type PatternCenter, type PatternPosition, type PatternVisit } from "../src/domain/patterns.js";
 import { iso, type Queryable } from "./db.js";
+import { loadControlComparison } from "./control-areas.js";
 import { errorFields, log } from "./logger.js";
 
 /** Newest encounters per aircraft whose positions are loaded for pattern scoring. */
@@ -34,7 +35,7 @@ export async function assessLogPatterns(db: Queryable, userId: string, aircraft:
   if (aircraft.length === 0) return result;
   const icaos = aircraft.map((item) => item.icao24);
   try {
-    const [positions, centers] = await Promise.all([
+    const [positions, centers, controls] = await Promise.all([
       db.query<PositionRow>(
         `with ranked as (
            select e.id, e.icao24, e.entered_at, e.last_seen_in_radius_at, e.center_latitude, e.center_longitude,
@@ -59,6 +60,8 @@ export async function assessLogPatterns(db: Queryable, userId: string, aircraft:
           group by 1, 2, 3`,
         [userId, icaos],
       ),
+      // Never fatal: a control-comparison failure just leaves pass 4 out.
+      loadControlComparison(db, userId, icaos).catch((error: unknown) => { log("warn", "pattern_control_comparison_failed", errorFields(error)); return new Map(); }),
     ]);
     const visitsByAircraft = new Map<string, Map<string, PatternVisit>>();
     for (const row of positions.rows) {
@@ -88,6 +91,7 @@ export async function assessLogPatterns(db: Queryable, userId: string, aircraft:
         visitCount: item.visitCount,
         visits: [...(visitsByAircraft.get(item.icao24)?.values() ?? [])],
         centers: centersByAircraft.get(item.icao24) ?? [],
+        control: controls.get(item.icao24),
       }));
     }
   } catch (error) {

@@ -9,6 +9,7 @@ import { AccountSummary, AuthForm, AuthPanel } from "./components/AuthPanel";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { EvidenceUploadPanel } from "./components/EvidenceUploadPanel";
 import { HistoryIcon, ListIcon, LogIcon, MapIcon, MoreIcon, NetIcon, PinIcon } from "./components/Icons";
+import { ControlCircles } from "./components/ControlCircles";
 import { LocationPanel } from "./components/LocationPanel";
 import { NetControl } from "./components/NetControl";
 import { NettedDrawer } from "./components/NettedDrawer";
@@ -273,6 +274,7 @@ export default function App() {
             <div className="stack-lg">
               <LocationPanel area={area} onChange={updateArea} follow={follow} />
               <NetControl state={net.state} area={area} saving={net.saving} saveError={net.saveError} onToggle={(enabled) => void net.setEnabled(enabled)} onSignIn={() => setAuthPrompt((value) => value + 1)} />
+              <ControlCircles signedIn={signedIn} onSignIn={() => setAuthPrompt((value) => value + 1)} />
               <section className="panel" aria-labelledby="account-heading">
                 <header className="panel-header"><div><p className="eyebrow">Neon Auth</p><h2 id="account-heading">Account</h2></div></header>
                 {signedIn ? <AccountSummary /> : <AuthForm />}

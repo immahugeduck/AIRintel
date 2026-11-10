@@ -1,4 +1,4 @@
-# Pattern flags (`pattern-flags-v1`)
+# Pattern flags (`pattern-flags-v2`)
 
 A deterministic review-priority ranking for netted aircraft. Code: `src/domain/patterns.ts` (pure scoring),
 `server/patterns.ts` (loads inputs), surfaced on `GET /history?action=netted` as `aircraft[].pattern`.
@@ -17,6 +17,12 @@ fly turns around a point on purpose; medical, news, survey, pipeline and police 
 3. **Correlation with your locations.** The same airframe logged at ≥ 2 of your watch centers ≥ 20 NM apart (circles that
    cannot overlap). Disabled for cruise-altitude transit. This is the only pass that tests "follows me" rather than
    "flies around here", and it needs the watch center to actually move with you (see Limitations).
+
+4. **Control comparison (v2).** Settings → Control circles: up to 2 fixed circles ≥ 10 mi from your watch center, in
+   places you do not go. The always-on sweep counts distinct aircraft there per UTC day (`control_sightings`, migration
+   0007). Seen at the controls on ≥ 2 days and at least half as many days as near you → `control_common` (−2, ordinary
+   local traffic). Near you on ≥ 3 days but never at the controls → `control_absent` (+1). Only circles that have
+   actually been swept count; with none, this pass is silent. The panel also shows a 7-day side-by-side count.
 
 Plus recurrence (≥ 5 entries on ≥ 3 days; weight 0 for routine operators) and identity gaps (no callsign / registration).
 

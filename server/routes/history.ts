@@ -1,8 +1,9 @@
 import { errorFields, log } from "../logger.js";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { distanceNm } from "../../src/domain/geometry.js";
-import { watchAreaInputSchema } from "../../src/domain/net.js";
+import { MAX_CONTROL_AREAS, controlAreaInputSchema, watchAreaInputSchema } from "../../src/domain/net.js";
+import { ControlTooCloseError, deleteControlArea, listControlAreas, upsertControlArea } from "../control-areas.js";
 import { MAX_VISITS_PER_AIRCRAFT, NETTED_ALGORITHM_VERSION, countRadiusVisits, nettedQuerySchema, toNettedDto, type NettedAircraft, type VisitObservation } from "../../src/domain/netted.js";
 import { VISIT_GAP_MINUTES, milesToMeters, milesToNm, nmToMiles } from "../../src/domain/units.js";
 import { iso, type Queryable } from "../db.js";
@@ -38,10 +39,11 @@ export function historyRoutes(db: Queryable) {
       if (action === "track") return await track(c.req.query("icao24"), clampHours(c.req.query("hours"), 24));
       if (action === "netted") return await netted();
       if (action === "watch-area") return await getWatchArea();
+      if (action === "control-areas") return c.json(await listControlAreas(db, c.get("user").id));
       return c.json({ error: "invalid_action" }, 400);
     } catch (error) {
       log("error", "history_query_failed", { action: action ?? null, ...errorFields(error) });
-      const missing = action === "watch-area" && error && typeof error === "object" && (error as { code?: unknown }).code === "42P01";
+      const missing = (action === "watch-area" || action === "control-areas") && error && typeof error === "object" && (error as { code?: unknown }).code === "42P01";
       return c.json({ error: missing ? "net_not_migrated" : "history_query_failed" }, missing ? 503 : 500);
     }
 
@@ -381,8 +383,49 @@ export function historyRoutes(db: Queryable) {
     }
   });
 
+const notMigrated = (error: unknown) => {
+    const code = error && typeof error === "object" ? (error as { code?: unknown }).code : null;
+    return code === "42P01" || code === "42703";
+  };
+
+  /** Save one control circle (slot 1 or 2) for the signed-in user. Returns the updated list with counts. */
+  async function putControlArea(c: Context<{ Variables: AppVariables }>) {
+    const text = await c.req.text().catch(() => "");
+    if (text.length === 0 || text.length > 2_000) return c.json({ error: "invalid_control_area" }, 400);
+    let body: unknown;
+    try { body = JSON.parse(text); } catch { return c.json({ error: "invalid_control_area" }, 400); }
+    const parsed = controlAreaInputSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: "invalid_control_area" }, 400);
+    const userId = c.get("user").id;
+    try {
+      await upsertControlArea(db, userId, parsed.data);
+      log("info", "net_control_area_saved", { slot: parsed.data.slot, enabled: parsed.data.enabled, radiusMi: parsed.data.radiusMi });
+      return c.json(await listControlAreas(db, userId));
+    } catch (error) {
+      if (error instanceof ControlTooCloseError) return c.json({ error: "control_too_close", distanceMi: Math.round(error.distanceMi * 10) / 10 }, 422);
+      log("error", "net_control_area_save_failed", errorFields(error));
+      return c.json({ error: notMigrated(error) ? "net_not_migrated" : "history_query_failed" }, notMigrated(error) ? 503 : 500);
+    }
+  }
+
+  /** Remove one control circle (and its sightings) for the signed-in user. */
+  app.delete("/", async (c) => {
+    if (c.req.query("action") !== "control-areas") return c.json({ error: "invalid_action" }, 400);
+    const slot = Number(c.req.query("slot"));
+    if (!Number.isInteger(slot) || slot < 1 || slot > MAX_CONTROL_AREAS) return c.json({ error: "invalid_control_area" }, 400);
+    const userId = c.get("user").id;
+    try {
+      await deleteControlArea(db, userId, slot);
+      return c.json(await listControlAreas(db, userId));
+    } catch (error) {
+      log("error", "net_control_area_delete_failed", errorFields(error));
+      return c.json({ error: notMigrated(error) ? "net_not_migrated" : "history_query_failed" }, notMigrated(error) ? 503 : 500);
+    }
+  });
+
   /** Save / enable / pause the always-on net for the signed-in user (history grant already enforced upstream). */
   app.put("/", async (c) => {
+    if (c.req.query("action") === "control-areas") return putControlArea(c);
     if (c.req.query("action") !== "watch-area") return c.json({ error: "invalid_action" }, 400);
     const text = await c.req.text().catch(() => "");
     if (text.length === 0 || text.length > 2_000) return c.json({ error: "invalid_watch_area" }, 400);
@@ -396,8 +439,7 @@ export function historyRoutes(db: Queryable) {
       return c.json(watchAreaResponse(row));
     } catch (error) {
       log("error", "net_watch_area_save_failed", errorFields(error));
-      const missing = error && typeof error === "object" && (error as { code?: unknown }).code === "42P01";
-      return c.json({ error: missing ? "net_not_migrated" : "history_query_failed" }, missing ? 503 : 500);
+      return c.json({ error: notMigrated(error) ? "net_not_migrated" : "history_query_failed" }, notMigrated(error) ? 503 : 500);
     }
   });
 

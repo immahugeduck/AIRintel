@@ -2,7 +2,7 @@ import { z } from "zod";
 import { distanceNm } from "./geometry.js";
 
 /**
- * Pattern flags (`pattern-flags-v1`): a deterministic review-priority score for netted aircraft.
+ * Pattern flags (`pattern-flags-v2`): a deterministic review-priority score for netted aircraft.
  *
  * What this is: a ranking of RECORDED behavior inside the watch radius (Calculated) plus identity facts (Observed),
  * so that the few aircraft whose behavior is unusual for this area rise to the top of the list for a human to review.
@@ -20,9 +20,12 @@ import { distanceNm } from "./geometry.js";
  *   3. Correlation with YOUR location: the same airframe logged at two or more of your watch centers that are far
  *      apart. This is the only pass that tests "follows me" rather than "flies around here", and it only works when
  *      the watch center actually moves with you.
+ *   4. Control comparison (v2): days the airframe was also seen in the user's fixed control circles (places the user
+ *      does NOT go). Common at the controls = ordinary local traffic; often near the user but never at the controls
+ *      = specific to the user's area. Only counted once a control circle has actually been swept.
  *   Plus recurrence across days and identity gaps (missing callsign or registration).
  */
-export const PATTERN_ALGORITHM_VERSION = "pattern-flags-v1";
+export const PATTERN_ALGORITHM_VERSION = "pattern-flags-v2";
 
 export type PatternPosition = {
   observedAt: string;
@@ -56,6 +59,8 @@ export type PatternInput = {
   visits: PatternVisit[];
   /** Every distinct watch center this aircraft was encountered at (log scope); empty in window scope. */
   centers: PatternCenter[];
+  /** Control-circle comparison (log scope, migration 0007). Absent when the user has no swept control circle. */
+  control?: { activeCircles: number; daysAtControls: number } | undefined;
 };
 
 export const patternEvidenceSchema = z.enum(["Observed", "Calculated", "Supported inference", "Unknown"]);
@@ -97,6 +102,10 @@ export const PATTERN_THRESHOLDS = {
   separateCentersNm: 20,
   recurrenceVisits: 5,
   recurrenceDays: 3,
+  /** Seen at the controls on at least this many days (and at least half as many days as near you) = common traffic. */
+  controlCommonDays: 2,
+  /** Seen near you on at least this many days but never at the controls = specific to your area. */
+  controlAbsentYourDays: 3,
   minTrackSamples: 4,
   priorityScore: 7,
   reviewScore: 4,
@@ -253,6 +262,17 @@ export function assessPattern(input: PatternInput): PatternAssessment {
 
   // Recurrence and identity.
   const days = new Set(input.visits.map((visit) => visit.enteredAt.slice(0, 10))).size;
+
+  // Pass 4: comparison with the user's control circles.
+  if (input.control && input.control.activeCircles > 0) {
+    const atControls = input.control.daysAtControls;
+    const circles = input.control.activeCircles === 1 ? "your control circle" : "your control circles";
+    if (atControls >= T.controlCommonDays && atControls * 2 >= days) {
+      reasons.push({ code: "control_common", label: `Also seen at ${circles} on ${atControls} days: common local traffic, not specific to you`, evidence: "Calculated", weight: -2 });
+    } else if (atControls === 0 && days >= T.controlAbsentYourDays) {
+      reasons.push({ code: "control_absent", label: `Seen near you on ${days} days but never at ${circles}`, evidence: "Calculated", weight: 1 });
+    }
+  }
   if (input.visitCount >= T.recurrenceVisits && days >= T.recurrenceDays) {
     reasons.push({ code: "recurrence", label: `${input.visitCount} entries across ${days}+ days`, evidence: "Observed", weight: routine ? 0 : 2 });
   }
