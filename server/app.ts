@@ -4,6 +4,7 @@ import type { Queryable } from "./db.js";
 import { originGuard, originGuardForMethods, requireAccess, type AppVariables } from "./http.js";
 import type { ConfigIssue, NetConfig } from "./config.js";
 import { healthNet } from "./net-watch.js";
+import { buildId } from "./build-info.js";
 import { NET_STALE_AFTER_MINUTES } from "../src/domain/net.js";
 import type { AdsbProviderConfig, ProviderFetchOptions } from "./providers/adsb.js";
 import { netRoutes } from "./routes/net.js";
@@ -65,6 +66,7 @@ export function createApp(deps: AppDependencies) {
       sweep: { secretConfigured: Boolean(deps.cronSecret) },
       net: deps.db ? await healthNet(deps.db, NET_STALE_AFTER_MINUTES) : { state: "unknown", lastSweepAgeSeconds: null, lastStatus: null },
       config: errors.length === 0 ? "ok" : "degraded",
+      build: buildId(),
       ...(errors.length > 0 ? { configErrors: errors } : {}),
     }, 200, { "Cache-Control": "no-store" });
   });

@@ -43,8 +43,8 @@ export const saveWatchArea = (input: WatchAreaInput) => request("PUT", watchArea
 
 /** Raised when a control circle is too close to the user's own watch center to be a comparison. */
 export class ControlTooCloseError extends Error {
-  constructor(readonly distanceMi: number) {
-    super(`A control circle must be at least 10 mi from your watch center (this one is ${distanceMi} mi away). Pick a place you do not go.`);
+  constructor(readonly distanceMi: number, readonly requiredMi: number = 10) {
+    super(`A control circle must not overlap places you are netted at: it needs to be at least ${requiredMi} mi from your watch circle and from places you recently used with follow me (this one is ${distanceMi} mi away). Pick a place you do not go, or use a smaller radius.`);
     this.name = "ControlTooCloseError";
   }
 }
@@ -63,12 +63,12 @@ async function controlRequest(method: "GET" | "PUT" | "DELETE", options: { body?
     ...(options.body ? { body: JSON.stringify(options.body) } : {}),
   });
   if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { error?: string; distanceMi?: number } | null;
+    const payload = await response.json().catch(() => null) as { error?: string; distanceMi?: number; requiredMi?: number } | null;
     if (response.status === 401) throw new AuthenticationRequiredError();
     if (response.status === 403 && payload?.error === "history_access_denied") throw new AccessDeniedError("history");
     if (response.status === 503 && payload?.error === "database_not_configured") throw new ProviderNotConfiguredError();
     if (response.status === 503 && payload?.error === "net_not_migrated") throw new NetNotMigratedError();
-    if (response.status === 422 && payload?.error === "control_too_close") throw new ControlTooCloseError(payload.distanceMi ?? 0);
+    if (response.status === 422 && payload?.error === "control_too_close") throw new ControlTooCloseError(payload.distanceMi ?? 0, payload.requiredMi ?? 10);
     if (response.status === 429) throw new Error("Too many requests. Wait a moment and try again.");
     throw new Error(`The control circles could not be updated (server answered ${response.status}).`);
   }

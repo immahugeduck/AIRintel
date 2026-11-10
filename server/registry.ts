@@ -87,29 +87,42 @@ export async function lookupCurrentRegistry(db: Queryable, aircraft: { id: strin
   };
 }
 
+export type RegistryIdentity = {
+  nNumber: string;
+  /** FAA registrant kind as imported: business / government / individual / other / unknown. */
+  registrantKind: string | null;
+  /** Business and government registrants only; natural persons are redacted on import and stay null. */
+  registrantName: string | null;
+  /** "MANUFACTURER MODEL" from the FAA reference file, used when the provider reports no type designator. */
+  model: string | null;
+  /** FAA TYPE AIRCRAFT code ("4" fixed wing single, "5" multi, "6" rotorcraft, ...). */
+  faaAircraftType: string | null;
+};
+
 /**
- * List-view fallback: FAA N-numbers for aircraft that broadcast no registration, from the newest published,
- * non-future snapshot. Fails closed like lookupCurrentRegistry: only a single exact Mode-S record counts, and an
- * aircraft with a rejected or conflicting persisted match gets nothing. Never throws (empty map on any failure,
- * including a database without the registry tables). The full owner/provenance checks stay in the profile view.
+ * List-view registry facts for netted aircraft, from the newest published, non-future snapshot. Fails closed like
+ * lookupCurrentRegistry: only a single exact Mode-S record counts, and an aircraft with a rejected or conflicting
+ * persisted match gets nothing. Never throws (empty map on any failure, including a database without the registry
+ * tables). The full owner/provenance checks stay in the profile view.
  */
-export async function lookupRegistryRegistrations(db: Queryable, icaos: readonly string[], asOf: Date = new Date()): Promise<Map<string, string>> {
-  const result = new Map<string, string>();
+export async function lookupRegistryIdentities(db: Queryable, icaos: readonly string[], asOf: Date = new Date()): Promise<Map<string, RegistryIdentity>> {
+  const result = new Map<string, RegistryIdentity>();
   const wanted = [...new Set(icaos.filter((icao) => /^[0-9a-f]{6}$/.test(icao)))];
   if (wanted.length === 0) return result;
   try {
-    const { rows } = await db.query<{ mode_s_hex: string; n_number: string }>(
+    const { rows } = await db.query<{ mode_s_hex: string; n_number: string; registrant_kind: string | null; registrant_display_name: string | null; manufacturer_name: string | null; model_name: string | null; aircraft_type_code: string | null }>(
       `with snapshot as (
          select id from airintel_private.faa_import_runs
           where status = 'published' and snapshot_date <= $2::date
           order by snapshot_date desc, finished_at desc nulls last, started_at desc, id desc limit 1
        ), candidates as (
-         select r.mode_s_hex, min(r.n_number) as n_number, count(*) as records
+         select r.mode_s_hex, count(*) over (partition by r.mode_s_hex) as records, r.n_number, r.registrant_kind,
+                case when r.owner_visibility = 'displayable_entity' then r.registrant_display_name end as registrant_display_name,
+                r.manufacturer_name, r.model_name, r.aircraft_type_code
            from public.aircraft_registry_records r
           where r.import_run_id = (select id from snapshot) and r.mode_s_hex = any($1::text[])
-          group by r.mode_s_hex
        )
-       select c.mode_s_hex, c.n_number
+       select c.mode_s_hex, c.n_number, c.registrant_kind, c.registrant_display_name, c.manufacturer_name, c.model_name, c.aircraft_type_code
          from candidates c
         where c.records = 1
           and not exists (
@@ -119,9 +132,24 @@ export async function lookupRegistryRegistrations(db: Queryable, icaos: readonly
           )`,
       [wanted, asOf.toISOString().slice(0, 10)],
     );
-    for (const row of rows) result.set(row.mode_s_hex, row.n_number);
+    for (const row of rows) {
+      const model = [row.manufacturer_name?.trim(), row.model_name?.trim()].filter(Boolean).join(" ");
+      result.set(row.mode_s_hex, {
+        nNumber: row.n_number,
+        registrantKind: row.registrant_kind ?? null,
+        registrantName: row.registrant_display_name?.trim() || null,
+        model: model || null,
+        faaAircraftType: row.aircraft_type_code?.trim() || null,
+      });
+    }
   } catch {
     result.clear();
   }
   return result;
+}
+
+/** List-view fallback: FAA N-numbers for aircraft that broadcast no registration (see lookupRegistryIdentities). */
+export async function lookupRegistryRegistrations(db: Queryable, icaos: readonly string[], asOf: Date = new Date()): Promise<Map<string, string>> {
+  const identities = await lookupRegistryIdentities(db, icaos, asOf);
+  return new Map([...identities].map(([icao, identity]) => [icao, identity.nNumber]));
 }

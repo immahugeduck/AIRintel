@@ -140,7 +140,7 @@ export default function App() {
     if (session.status === "unconfigured") return { kind: "session", reason: "unconfigured", aircraft: sessionList() };
     if (session.status === "checking") return { kind: "loading" };
     if (!signedIn) return { kind: "session", reason: "signed-out", aircraft: sessionList() };
-    if (netted.data) return { kind: "ready", source: "recorded", aircraft: netted.data.aircraft, hours: netted.data.query.hours, truncated: netted.data.truncated, net: netted.data.net ?? net.status, lifetime: netted.data.source === "log" };
+    if (netted.data) return { kind: "ready", source: "recorded", aircraft: netted.data.aircraft, hours: netted.data.query.hours, truncated: netted.data.truncated, net: netted.data.net ?? net.status, lifetime: netted.data.source === "log", patternStatus: netted.data.patternStatus ?? null };
     if (netted.error instanceof AccessDeniedError) return { kind: "session", reason: "no-access", aircraft: sessionList() };
     if (netted.error instanceof AuthenticationRequiredError) return { kind: "session", reason: "signed-out", aircraft: sessionList() };
     if (netted.error instanceof ProviderNotConfiguredError) return { kind: "session", reason: "unconfigured", aircraft: sessionList() };

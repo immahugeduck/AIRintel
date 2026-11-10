@@ -3,10 +3,12 @@ import type { z } from "zod";
 import { CONTROL_WINDOW_DAYS, MIN_CONTROL_SEPARATION_MI, type ControlArea, type ControlAreasResponse, type controlAreaInputSchema } from "../src/domain/net.js";
 import { milesToNm, nmToMiles } from "../src/domain/units.js";
 import { iso, type Queryable } from "./db.js";
+import { localDay } from "../src/domain/patterns.js";
+import { PATTERN_TIME_ZONE } from "../src/domain/pattern-config.js";
 
 /**
  * Control circles (migration 0007): up to two fixed circles per account that the user does NOT go to. The always-on
- * sweep counts the distinct aircraft seen inside each one per UTC day (airintel_private.control_sightings). Comparing
+ * sweep counts the distinct aircraft seen inside each one per local day (America/Indianapolis) (airintel_private.control_sightings). Comparing
  * an aircraft's days at the controls with its days near the user separates common local traffic from aircraft that
  * show up specifically where the user is. Like every airintel_private table, nothing here is browser-readable.
  */
@@ -39,7 +41,7 @@ export async function listControlAreas(db: Queryable, userId: string, now: Date 
     db.query<ControlRow>(
       `select c.id, c.user_id, c.slot, c.label, c.latitude, c.longitude, c.radius_mi, c.enabled, c.updated_at, c.last_success_at,
               (select count(distinct s.icao24)::int from airintel_private.control_sightings s
-                where s.control_area_id = c.id and s.day >= (now() at time zone 'utc')::date - $2::integer) as aircraft_seen
+                where s.control_area_id = c.id and s.day >= (now() at time zone 'America/Indianapolis')::date - $2::integer) as aircraft_seen
          from airintel_private.net_control_areas c
         where c.user_id = $1::uuid
         order by c.slot`,
@@ -55,27 +57,58 @@ export async function listControlAreas(db: Queryable, userId: string, now: Date 
 }
 
 export class ControlTooCloseError extends Error {
-  constructor(readonly distanceMi: number) { super("control_too_close"); this.name = "ControlTooCloseError"; }
+  constructor(readonly distanceMi: number, readonly requiredMi: number = MIN_CONTROL_SEPARATION_MI) { super("control_too_close"); this.name = "ControlTooCloseError"; }
 }
 
-/** True when a control center is too close to the user's own watch center to act as a comparison. */
-export function controlTooClose(control: { latitude: number; longitude: number }, watch: { latitude: number; longitude: number } | null): number | null {
-  if (!watch) return null;
-  const miles = nmToMiles(distanceNm(control.latitude, control.longitude, watch.latitude, watch.longitude));
-  return miles < MIN_CONTROL_SEPARATION_MI ? miles : null;
+/** Gap kept between a control circle's edge and the edge of any circle where the user was netted. */
+export const CONTROL_EDGE_MARGIN_MI = 1;
+/** Follow-me history window: watch centers used in this many days also count as "places you go". */
+export const CONTROL_PLACE_HISTORY_DAYS = 30;
+
+type Place = { latitude: number; longitude: number; radiusMi: number };
+
+/**
+ * The closest conflict between a control circle and the user's places (current watch circle plus recent follow-me
+ * centers), or null when it is clear. A control must be at least MIN_CONTROL_SEPARATION_MI away AND its circle must not
+ * overlap any of those circles (center distance ≥ both radii + CONTROL_EDGE_MARGIN_MI).
+ */
+export function controlTooClose(control: Place, places: readonly Place[]): { distanceMi: number; requiredMi: number } | null {
+  let worst: { distanceMi: number; requiredMi: number; shortfall: number } | null = null;
+  for (const place of places) {
+    const distanceMi = nmToMiles(distanceNm(control.latitude, control.longitude, place.latitude, place.longitude));
+    const requiredMi = Math.max(MIN_CONTROL_SEPARATION_MI, control.radiusMi + place.radiusMi + CONTROL_EDGE_MARGIN_MI);
+    const shortfall = requiredMi - distanceMi;
+    if (shortfall > 0 && (!worst || shortfall > worst.shortfall)) worst = { distanceMi, requiredMi, shortfall };
+  }
+  return worst ? { distanceMi: worst.distanceMi, requiredMi: worst.requiredMi } : null;
 }
 
 /**
  * Saves the control circle in `input.slot`. Moving it or changing its radius clears its success marker and its old
- * sightings (they described a different place). Rejects a center within MIN_CONTROL_SEPARATION_MI of the user's
- * saved watch center: a control that overlaps "where I am" cannot serve as a comparison.
+ * sightings (they described a different place). Rejects a circle that is too close to, or overlaps, the user's saved
+ * watch circle or any watch center they were netted at in the last CONTROL_PLACE_HISTORY_DAYS days (follow me moves
+ * the watch center, so "where I go" is more than today's center).
  */
 export async function upsertControlArea(db: Queryable, userId: string, input: z.output<typeof controlAreaInputSchema>): Promise<void> {
-  const { rows: watch } = await db.query<{ latitude: number; longitude: number }>(
-    "select latitude, longitude from airintel_private.net_watch_areas where user_id = $1::uuid", [userId],
-  );
-  const close = controlTooClose(input, watch[0] ?? null);
-  if (close !== null) throw new ControlTooCloseError(close);
+  const [{ rows: watch }, { rows: recent }] = await Promise.all([
+    db.query<{ latitude: number; longitude: number; radius_mi: number }>(
+      "select latitude, longitude, radius_mi from airintel_private.net_watch_areas where user_id = $1::uuid", [userId],
+    ),
+    db.query<{ latitude: number; longitude: number; radius_nm: number }>(
+      `select round(center_latitude::numeric, 2)::float8 as latitude, round(center_longitude::numeric, 2)::float8 as longitude, max(radius_nm)::float8 as radius_nm
+         from airintel_private.encounters
+        where user_id = $1::uuid and entered_at >= now() - make_interval(days => $2::integer)
+        group by 1, 2
+        limit 500`,
+      [userId, CONTROL_PLACE_HISTORY_DAYS],
+    ),
+  ]);
+  const places: Place[] = [
+    ...watch.map((row) => ({ latitude: row.latitude, longitude: row.longitude, radiusMi: row.radius_mi })),
+    ...recent.map((row) => ({ latitude: row.latitude, longitude: row.longitude, radiusMi: nmToMiles(row.radius_nm) })),
+  ];
+  const close = controlTooClose(input, places);
+  if (close !== null) throw new ControlTooCloseError(close.distanceMi, close.requiredMi);
   const { rows } = await db.query<{ id: string; moved: boolean }>(
     `with previous as (
        select id, latitude, longitude, radius_mi from airintel_private.net_control_areas where user_id = $1::uuid and slot = $2
@@ -127,7 +160,7 @@ export async function markControlAreasPolled(db: Queryable, ids: readonly string
 
 export type SightingAggregate = { icao24: string; day: string; count: number; firstSeenAt: string; lastSeenAt: string; closestNm: number };
 
-/** Pure: per (aircraft, UTC day) aggregate of the observations inside the control circle. */
+/** Pure: per (aircraft, local day in PATTERN_TIME_ZONE) aggregate of the observations inside the control circle. */
 export function aggregateSightings(area: { latitude: number; longitude: number; radiusMi: number }, observations: readonly ControlObservation[]): SightingAggregate[] {
   const radiusNm = milesToNm(area.radiusMi);
   const byKey = new Map<string, SightingAggregate>();
@@ -138,7 +171,7 @@ export function aggregateSightings(area: { latitude: number; longitude: number; 
     const distance = distanceNm(area.latitude, area.longitude, observation.latitude, observation.longitude);
     if (distance > radiusNm) continue;
     const at = new Date(time).toISOString();
-    const day = at.slice(0, 10);
+    const day = localDay(at, PATTERN_TIME_ZONE);
     const key = `${icao24}:${day}`;
     const current = byKey.get(key);
     if (!current) { byKey.set(key, { icao24, day, count: 1, firstSeenAt: at, lastSeenAt: at, closestNm: distance }); continue; }
@@ -185,7 +218,7 @@ export async function loadControlComparison(db: Queryable, userId: string, icaos
        select s.icao24, (select count(*)::int from mine) as active, count(distinct s.day)::int as days
          from airintel_private.control_sightings s
         where s.control_area_id in (select id from mine) and s.icao24 = any($2::text[])
-          and s.day >= (now() at time zone 'utc')::date - $3::integer
+          and s.day >= (now() at time zone 'America/Indianapolis')::date - $3::integer
         group by s.icao24
        union all
        select null, (select count(*)::int from mine), 0`,

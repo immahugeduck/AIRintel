@@ -9,8 +9,8 @@ import { VISIT_GAP_MINUTES, milesToMeters, milesToNm, nmToMiles } from "../../sr
 import { iso, type Queryable } from "../db.js";
 import type { AppVariables } from "../http.js";
 import { getWatchAreaRow, toNetStatus, upsertWatchArea, watchAreaResponse } from "../net-watch.js";
-import { assessLogPatterns, assessWindowPatterns } from "../patterns.js";
-import { lookupRegistryRegistrations } from "../registry.js";
+import { assessLogPatterns, assessWindowPatterns, loadProviderFlags, type PatternRunStatus, type ProviderFlags } from "../patterns.js";
+import { lookupRegistryIdentities } from "../registry.js";
 
 const searchSchema = z.string().trim().min(2).max(24).regex(/^[a-zA-Z0-9-]+$/);
 const icaoSchema = z.string().trim().toLowerCase().regex(/^[0-9a-f]{6}$/);
@@ -240,13 +240,25 @@ export function historyRoutes(db: Queryable) {
       }
       // Freshness of the always-on net for this user; null when the net tables are not migrated yet (never fatal).
       const net = await getWatchAreaRow(db, c.get("user").id).then((row) => toNetStatus(row), () => null);
-      const registry = await lookupRegistryRegistrations(db, summaries.filter((summary) => !summary.registration).map((summary) => summary.icao24));
-      const windowAircraft = summaries.map((summary) => ({ ...toNettedDto(summary, typeCodes.get(summary.icao24) ?? null), registryRegistration: summary.registration ? null : registry.get(summary.icao24) ?? null }));
+      // Registry facts for every aircraft (owner kind for scoring); N-number / model only fill gaps in what was broadcast.
+      const registry = await lookupRegistryIdentities(db, summaries.map((summary) => summary.icao24));
+      const windowAircraft = summaries.map((summary) => {
+        const dto = toNettedDto(summary, typeCodes.get(summary.icao24) ?? null);
+        const facts = registry.get(summary.icao24);
+        return { ...dto, registryRegistration: summary.registration ? null : facts?.nNumber ?? null, registryModel: dto.aircraftTypeCode ? null : facts?.model ?? null };
+      });
       let patterns = new Map<string, NonNullable<NettedAircraft["pattern"]>>();
+      let patternStatus: PatternRunStatus = { state: "ok", detail: null };
       try {
-        patterns = assessWindowPatterns(windowAircraft, rows.slice(0, rowLimit), { latitude: lat, longitude: lon }, radiusNm);
+        const flags = await loadProviderFlags(db, windowAircraft.map((item) => item.icao24)).catch((error: unknown) => {
+          log("warn", "pattern_provider_flags_failed", errorFields(error));
+          patternStatus = { state: "partial", detail: "Pattern flags are incomplete: provider database flags unavailable." };
+          return new Map<string, ProviderFlags>();
+        });
+        patterns = assessWindowPatterns(windowAircraft, rows.slice(0, rowLimit), { latitude: lat, longitude: lon }, radiusNm, { registry, flags });
       } catch (error) {
         log("error", "pattern_assessment_failed", { scope: "window", ...errorFields(error) });
+        patternStatus = { state: "failed", detail: "Pattern flags could not be scored right now. The list is shown without them." };
       }
       return c.json({
         query: { latitude: lat, longitude: lon, radiusMi, radiusNm, hours, visitGapMinutes: VISIT_GAP_MINUTES },
@@ -258,6 +270,7 @@ export function historyRoutes(db: Queryable) {
         aircraft: windowAircraft.map((item) => ({ ...item, pattern: patterns.get(item.icao24) ?? null })),
         net,
         source: "window",
+        patternStatus,
       });
     }
 
@@ -313,12 +326,13 @@ export function historyRoutes(db: Queryable) {
         visits.set(row.icao24, list);
       }
       const typeCodes = new Map(types.rows.flatMap((row) => (row.type_code ? [[row.icao24, row.type_code] as const] : [])));
-      const registry = await lookupRegistryRegistrations(db, kept.filter((row) => !row.last_registration).map((row) => row.icao24));
+      const registry = await lookupRegistryIdentities(db, kept.map((row) => row.icao24));
       const aircraft: NettedAircraft[] = kept.map((row) => ({
         icao24: row.icao24,
         callsign: row.last_callsign,
         registration: row.last_registration,
-        registryRegistration: row.last_registration ? null : registry.get(row.icao24) ?? null,
+        registryRegistration: row.last_registration ? null : registry.get(row.icao24)?.nNumber ?? null,
+        registryModel: typeCodes.get(row.icao24) ? null : registry.get(row.icao24)?.model ?? null,
         aircraftTypeCode: typeCodes.get(row.icao24) ?? null,
         visitCount: row.encounter_count,
         firstSeenAt: iso(row.first_encountered_at)!,
@@ -326,7 +340,7 @@ export function historyRoutes(db: Queryable) {
         closestApproachMi: nmToMiles(row.closest_approach_nm),
         visits: visits.get(row.icao24) ?? [],
       }));
-      const patterns = await assessLogPatterns(db, userId, aircraft);
+      const { assessments: patterns, status: patternStatus } = await assessLogPatterns(db, userId, aircraft, { registry });
       for (const item of aircraft) item.pattern = patterns.get(item.icao24) ?? null;
       const windowEnd = new Date();
       const earliest = Math.min(...kept.map((row) => row.first_encountered_at.getTime()));
@@ -341,6 +355,7 @@ export function historyRoutes(db: Queryable) {
         aircraft,
         net,
         source: "log",
+        patternStatus,
       });
     }
 
@@ -406,7 +421,7 @@ const notMigrated = (error: unknown) => {
       log("info", "net_control_area_saved", { slot: parsed.data.slot, enabled: parsed.data.enabled, radiusMi: parsed.data.radiusMi });
       return c.json(await listControlAreas(db, userId));
     } catch (error) {
-      if (error instanceof ControlTooCloseError) return c.json({ error: "control_too_close", distanceMi: Math.round(error.distanceMi * 10) / 10 }, 422);
+      if (error instanceof ControlTooCloseError) return c.json({ error: "control_too_close", distanceMi: Math.round(error.distanceMi * 10) / 10, requiredMi: Math.round(error.requiredMi * 10) / 10 }, 422);
       log("error", "net_control_area_save_failed", errorFields(error));
       return c.json({ error: notMigrated(error) ? "net_not_migrated" : "history_query_failed" }, notMigrated(error) ? 503 : 500);
     }

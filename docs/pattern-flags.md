@@ -1,7 +1,8 @@
-# Pattern flags (`pattern-flags-v2`)
+# Pattern flags (`pattern-flags-v3`)
 
 A deterministic review-priority ranking for netted aircraft. Code: `src/domain/patterns.ts` (pure scoring),
-`server/patterns.ts` (loads inputs), surfaced on `GET /history?action=netted` as `aircraft[].pattern`.
+`src/domain/pattern-config.ts` (all regional lists and airports), `server/patterns.ts` (loads inputs), surfaced on
+`GET /history?action=netted` as `aircraft[].pattern` plus a response-level `patternStatus`.
 
 **What it is not.** Per AGENTS.md this never claims intent, mission, sensor use or surveillance. Training aircraft
 fly turns around a point on purpose; medical, news, survey, pipeline and police flights loiter. A high score means
@@ -9,40 +10,53 @@ fly turns around a point on purpose; medical, news, survey, pipeline and police 
 
 ## Passes
 
-1. **Routine explanations (weed out).** Scheduled airline/cargo flight numbers (`SCHEDULED_OPERATORS`), fractional/charter
-   jets (`CHARTER_OPERATORS`), local training fleets (`TRAINING_FLEETS`: LIFT Academy `LTA*`, Vincennes University `N…VU`),
-   cruise-altitude transit (median ≥ 10,000 ft), steady climb/descent (≥ 60% of samples at |VS| ≥ 500 fpm).
-2. **Behavior inside the radius.** Circling (net heading change ≥ 300° in one visit, ≥ 4 track samples; S-turns cancel),
-   orbit centroid within 2 NM of the watch center, dwell ≥ 15 min, low and slow (median ≤ 6,000 ft and ≤ 140 kt).
-3. **Correlation with your locations.** The same airframe logged at ≥ 2 of your watch centers ≥ 20 NM apart (circles that
-   cannot overlap). Disabled for cruise-altitude transit. This is the only pass that tests "follows me" rather than
-   "flies around here", and it needs the watch center to actually move with you (see Limitations).
+1. **Routine explanations (weed out, never overridden).** Scheduled airline/cargo flight numbers, fractional/charter
+   jets, and local training fleets matched by callsign designator, registration pattern or FAA owner name
+   (`TRAINING_FLEETS`: LIFT Academy `LTA`, Vincennes University `N…VU`, Purdue `PDU` / `N…PU` / Purdue owner names,
+   Indiana State `ISU`, ATP `CXK` / ATP owner, Tom Wood Aviation `N…TW`). The FAA registration is used when the aircraft
+   did not broadcast one. Also: airport traffic pattern (`airport_pattern`, −3: within 3 NM of a `KNOWN_AIRPORTS` field
+   and median altitude ≤ field elevation + 2,500 ft), cruise transit (−3), steady climb/descent (−2). A routine
+   aircraft keeps tier `routine` (score capped at 0) even if it circles, loiters or shows up at several of your places.
+2. **Behavior from geometry.** Circling is judged from positions, not reported track, so it works at 5 s, 60 s and
+   5 min sampling: a visit is assessable with ≥ 3 positions over ≥ 3 min. `circling` (+3) is either a winding
+   (bearing around the visit centroid turns ≥ 300° net, every step ≤ 120°, spread ≤ 3 NM, ≥ 40 kt) or a confined
+   track (≥ 5 min, ≥ 40 kt, spread ≤ 2.5 NM, distance flown ≥ a full circle of that spread). Hovering/parked
+   aircraft are not "circling". `centered_orbit` (+2, orbit within 2 NM of the watch center), `loiter` (+2/+3),
+   `low_slow` (+1, needs ≥ 3 positions).
+3. **Correlation with your locations (time-aware).** `followed_locations` (+4, +5 when on ≥ 2 local days) needs pairs
+   of sightings at your watch centers ≥ 20 NM apart **within 6 hours of each other**, so "flew near home in May and
+   near work in June" no longer counts. `separate_places` (+1) is the weaker "seen at several places" fact.
+4. **Identity facts.** adsb.lol `dbFlags` from the stored raw payloads (`military_flag` +2, `privacy_address` PIA +1,
+   `ladd` +1), FAA owner type (`government_owner` +2 for government registrants, but not universities/colleges/
+   schools), rotorcraft (`rotorcraft_loiter` +1, ADS-B category A7 or FAA aircraft type 6, only when it also circles or
+   loiters), identity gaps (+1). The FAA model is shown as the type when no ICAO type code was broadcast.
+5. **Control comparison.** Control circles must not overlap your watch circle or any watch center used in the last 30
+   days (follow me history): center distance ≥ max(10 mi, both radii + 1 mi). Sightings are counted per local day
+   (America/Indianapolis). `control_common` −2, `control_absent` +1, as in v2.
 
-4. **Control comparison (v2).** Settings → Control circles: up to 2 fixed circles ≥ 10 mi from your watch center, in
-   places you do not go. The always-on sweep counts distinct aircraft there per UTC day (`control_sightings`, migration
-   0007). Seen at the controls on ≥ 2 days and at least half as many days as near you → `control_common` (−2, ordinary
-   local traffic). Near you on ≥ 3 days but never at the controls → `control_absent` (+1). Only circles that have
-   actually been swept count; with none, this pass is silent. The panel also shows a 7-day side-by-side count.
+Plus recurrence (+2, ≥ 5 entries on ≥ 3 local days; 0 for routine aircraft). Days are counted in
+`PATTERN_TIME_ZONE` (America/Indianapolis), not UTC.
 
-Plus recurrence (≥ 5 entries on ≥ 3 days; weight 0 for routine operators) and identity gaps (no callsign / registration).
+**Tiers:** `routine` (pass 1), `priority` (score ≥ 7; capped at `review` when coverage is sparse and there is no
+`followed_locations`), `review` (≥ 4), `insufficient` ("Not enough data": no assessable visit and no positive
+behavioral reason), `low`. Coverage is `ok` / `limited` / `sparse`.
 
-Tiers: `routine` (explained by pass 1 and no pass-3 hit), `priority` (score ≥ 7), `review` (≥ 4), `low`.
-Log scope scores the newest 20 encounters per aircraft with their recorded positions; window scope uses the window's
-positions and cannot run pass 3.
+**Loading.** Log scope scores the newest 20 encounters per aircraft with their positions, evenly downsampled to 180
+per visit (`downsampled` reason), and up to 500 saved sightings per aircraft for pass 3, in chunks of 40 aircraft (no
+global row cap). `patternStatus` is `ok`, `partial` (flags or controls could not be loaded; scores still shown) or
+`failed` (some aircraft could not be scored); the panel shows a notice instead of silently dropping them.
 
 ## Limitations (Unknown, not guessed)
 
-- **Follow me** (Location panel) re-centers the watch circle whenever the phone is more than 1 mi from it, while the
-  app is open; each encounter stores its center and `center_mode` (`follow` / `fixed`, migration 0007). With follow
-  me off, the center is set once per tap of **Use my current location**, and pass 3 can only fire for places where a
-  center was actually set. While the app is closed the always-on net keeps the last center (browsers cannot report
-  location in the background).
-- With 5-minute sweeps most visits have 1–2 positions, so circling is only detectable while the app is open (live view)
-  or with 1-minute polling. Such aircraft are marked `coverage: "sparse"`.
-- Lists are regional defaults; extend `TRAINING_FLEETS` for your area.
+- **Follow me** re-centers the watch circle while the app is open; each encounter stores its center and
+  `center_mode` (`follow` / `fixed`, migration 0007). While the app is closed the always-on net keeps the last center.
+  `GET /health` reports `net.writer` (`stale_suspected` when new sweep encounters lack the tag, meaning an older
+  deployment is running the sweep) and `build` (commit of the running deployment); the sweep response carries `build`.
+- Most sweep visits have 1–2 positions; such aircraft get `insufficient` or `limited` coverage rather than a guess.
+- Fleet, operator and airport lists are regional defaults in `src/domain/pattern-config.ts`.
 
 ## UI and export
 
-Netted cards show a badge (Priority review / Review / Routine · reason) and a "Why flagged" list. A filter row offers
+Netted cards show a badge (Priority review / Review / Not enough data / Routine · reason) and a "Why flagged" list. A filter row offers
 All / Flagged / Hide routine (sorted by tier then score). CSV adds `latest_entry_center_lat/lon`, `pattern_tier`,
 `pattern_score`, `pattern_reasons`.

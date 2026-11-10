@@ -135,6 +135,8 @@ export const nettedAircraftSchema = z.object({
    * Older servers omit it.
    */
   registryRegistration: z.string().trim().min(1).nullish(),
+  /** "MANUFACTURER MODEL" from the FAA registry when the provider reported no type designator. Older servers omit it. */
+  registryModel: z.string().trim().min(1).nullish(),
   /** Provider-reported ICAO type designator from the latest retained raw observation, when present. */
   aircraftTypeCode: z.string().trim().min(1).nullable(),
   /** Encounters counted: lifetime total for the account when the response source is "log", else within the window. */
@@ -144,7 +146,7 @@ export const nettedAircraftSchema = z.object({
   closestApproachMi: z.number().finite().nonnegative(),
   /** Individual entries, newest first (at most MAX_VISITS_PER_AIRCRAFT). Older servers omit this; treated as empty. */
   visits: z.array(radiusVisitSchema).default([]),
-  /** Review-priority flags (`pattern-flags-v2`, src/domain/patterns.ts). Calculated behavior only, never intent. */
+  /** Review-priority flags (`pattern-flags-v3`, src/domain/patterns.ts). Calculated behavior only, never intent. */
   pattern: patternAssessmentSchema.nullish(),
 });
 export type NettedAircraft = z.infer<typeof nettedAircraftSchema>;
@@ -168,6 +170,8 @@ export const nettedResponseSchema = z.object({
   net: netStatusSchema.nullish(),
   /** "log": lifetime counts from the saved per-account log; "window": recomputed for the time window. Older servers omit it. */
   source: z.enum(["window", "log"]).default("window"),
+  /** Whether pattern flags are complete ("partial" / "failed" explain what is missing). Older servers omit it. */
+  patternStatus: z.object({ state: z.enum(["ok", "partial", "failed"]), detail: z.string().nullable() }).nullish(),
 });
 export type NettedResponse = z.infer<typeof nettedResponseSchema>;
 
