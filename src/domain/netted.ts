@@ -130,6 +130,11 @@ export const nettedAircraftSchema = z.object({
   icao24: z.string().regex(/^[0-9a-f]{6}$/),
   callsign: z.string().trim().min(1).nullable(),
   registration: z.string().trim().min(1).nullable(),
+  /**
+   * N-number from the published FAA registry snapshot (exact Mode-S match) when the aircraft broadcast no registration.
+   * Older servers omit it.
+   */
+  registryRegistration: z.string().trim().min(1).nullish(),
   /** Provider-reported ICAO type designator from the latest retained raw observation, when present. */
   aircraftTypeCode: z.string().trim().min(1).nullable(),
   /** Encounters counted: lifetime total for the account when the response source is "log", else within the window. */

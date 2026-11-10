@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "faa:validate": "node scripts/faa-validate.mjs",
+    "faa:import": "node scripts/faa-import.mjs",
     "api:dev": "tsx watch server/node.ts",
     "db:migrate": "node scripts/migrate.mjs",
     "access:grant": "node scripts/access.mjs grant",

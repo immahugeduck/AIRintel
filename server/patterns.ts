@@ -86,7 +86,8 @@ export async function assessLogPatterns(db: Queryable, userId: string, aircraft:
       result.set(item.icao24, assessPattern({
         icao24: item.icao24,
         callsign: item.callsign,
-        registration: item.registration,
+        // A registry N-number (FAA, exact Mode S) closes the identity gap just like a broadcast registration.
+        registration: item.registration ?? item.registryRegistration ?? null,
         aircraftTypeCode: item.aircraftTypeCode,
         visitCount: item.visitCount,
         visits: [...(visitsByAircraft.get(item.icao24)?.values() ?? [])],
@@ -131,7 +132,7 @@ export function assessWindowPatterns(aircraft: readonly NettedAircraft[], rows: 
         positions: positions.filter((p) => { const t = Date.parse(p.observedAt); return t >= start && t <= end; }),
       };
     });
-    result.set(item.icao24, assessPattern({ icao24: item.icao24, callsign: item.callsign, registration: item.registration, aircraftTypeCode: item.aircraftTypeCode, visitCount: item.visitCount, visits, centers: [] }));
+    result.set(item.icao24, assessPattern({ icao24: item.icao24, callsign: item.callsign, registration: item.registration ?? item.registryRegistration ?? null, aircraftTypeCode: item.aircraftTypeCode, visitCount: item.visitCount, visits, centers: [] }));
   }
   return result;
 }

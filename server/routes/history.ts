@@ -10,6 +10,7 @@ import { iso, type Queryable } from "../db.js";
 import type { AppVariables } from "../http.js";
 import { getWatchAreaRow, toNetStatus, upsertWatchArea, watchAreaResponse } from "../net-watch.js";
 import { assessLogPatterns, assessWindowPatterns } from "../patterns.js";
+import { lookupRegistryRegistrations } from "../registry.js";
 
 const searchSchema = z.string().trim().min(2).max(24).regex(/^[a-zA-Z0-9-]+$/);
 const icaoSchema = z.string().trim().toLowerCase().regex(/^[0-9a-f]{6}$/);
@@ -239,7 +240,8 @@ export function historyRoutes(db: Queryable) {
       }
       // Freshness of the always-on net for this user; null when the net tables are not migrated yet (never fatal).
       const net = await getWatchAreaRow(db, c.get("user").id).then((row) => toNetStatus(row), () => null);
-      const windowAircraft = summaries.map((summary) => toNettedDto(summary, typeCodes.get(summary.icao24) ?? null));
+      const registry = await lookupRegistryRegistrations(db, summaries.filter((summary) => !summary.registration).map((summary) => summary.icao24));
+      const windowAircraft = summaries.map((summary) => ({ ...toNettedDto(summary, typeCodes.get(summary.icao24) ?? null), registryRegistration: summary.registration ? null : registry.get(summary.icao24) ?? null }));
       let patterns = new Map<string, NonNullable<NettedAircraft["pattern"]>>();
       try {
         patterns = assessWindowPatterns(windowAircraft, rows.slice(0, rowLimit), { latitude: lat, longitude: lon }, radiusNm);
@@ -311,10 +313,12 @@ export function historyRoutes(db: Queryable) {
         visits.set(row.icao24, list);
       }
       const typeCodes = new Map(types.rows.flatMap((row) => (row.type_code ? [[row.icao24, row.type_code] as const] : [])));
+      const registry = await lookupRegistryRegistrations(db, kept.filter((row) => !row.last_registration).map((row) => row.icao24));
       const aircraft: NettedAircraft[] = kept.map((row) => ({
         icao24: row.icao24,
         callsign: row.last_callsign,
         registration: row.last_registration,
+        registryRegistration: row.last_registration ? null : registry.get(row.icao24) ?? null,
         aircraftTypeCode: typeCodes.get(row.icao24) ?? null,
         visitCount: row.encounter_count,
         firstSeenAt: iso(row.first_encountered_at)!,

@@ -204,7 +204,7 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
                   <button type="button" className="netted-main" aria-pressed={selected} onClick={() => onSelect(item.icao24)}>
                     <span className="netted-callsign mono">{item.callsign ?? <span className="unknown">Unknown</span>}</span>
                     <PatternBadge pattern={item.pattern} />
-                    <span className="netted-ident">{item.registration ?? "Registration unknown"} · {item.aircraftTypeCode ?? "Type unknown"}</span>
+                    <span className="netted-ident">{item.registration ?? (item.registryRegistration ? `${item.registryRegistration} (FAA)` : "Registration unknown")} · {item.aircraftTypeCode ?? "Type unknown"}</span>
                   </button>
                   <span className="visit-counter" aria-label={`Entered the radius ${item.visitCount} ${item.visitCount === 1 ? "time" : "times"}${lifetime ? " in total" : ""}`}>
                     <strong className="mono">{item.visitCount}×</strong><small>{lifetime ? (item.visitCount === 1 ? "encounter" : "encounters") : item.visitCount === 1 ? "entry" : "entries"}</small>
@@ -254,7 +254,7 @@ function AircraftDescription({ item, enabled }: { item: NettedAircraft; enabled:
     <>
       <dl className="description-grid">
         <div><dt>ICAO24 (Observed)</dt><dd className="mono">{item.icao24.toUpperCase()}</dd></div>
-        <div><dt>Registration</dt><dd>{registry?.nNumber.value ?? item.registration ?? "Unknown"}</dd></div>
+        <div><dt>Registration</dt><dd>{registry?.nNumber.value ?? item.registration ?? item.registryRegistration ?? "Unknown"}</dd></div>
         <div><dt>Type</dt><dd>{makeModel ?? item.aircraftTypeCode ?? "Unknown"}{!makeModel && item.aircraftTypeCode ? <small> provider-reported</small> : null}</dd></div>
         <div><dt>Registered owner</dt><dd>{value(registry?.registeredOwner)}</dd></div>
         <div><dt>Documented operator</dt><dd>{value(profile.data?.operator.documentedOperator)}</dd></div>
