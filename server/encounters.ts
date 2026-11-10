@@ -17,7 +17,12 @@ import { errorFields, log } from "./logger.js";
  * back the claim, and observations at or before the processed watermark are ignored (idempotent replays).
  */
 
-export type EncounterArea = { latitude: number; longitude: number; radiusNm: number };
+/**
+ * `centerMode` (migration 0007): "follow" when the center was the phone's own position in follow-me mode, "fixed" when
+ * it was a manually set / one-off location. Unknown (older clients, the anonymous path) leaves the column null.
+ */
+export type CenterMode = "follow" | "fixed";
+export type EncounterArea = { latitude: number; longitude: number; radiusNm: number; centerMode?: CenterMode | undefined };
 export type EncounterSource = "live" | "sweep";
 export type EncounterObservation = { icao24: string; observedAt: string; latitude: number; longitude: number; callsign?: string | null | undefined; registration?: string | null | undefined };
 
@@ -131,7 +136,8 @@ export async function recordEncounters(db: Queryable, userId: string, area: Enco
       try {
         // Claim + encounter writes + tally update commit together or not at all, so a failed write never advances
         // the watermark past observations whose encounters were not saved (the next batch retries them).
-        await withTransaction(db, (tx) => applyAdvance(tx, userId, icao24, area, source, tally, state, advance));
+        const insertedIds = await withTransaction(db, (tx) => applyAdvance(tx, userId, icao24, area, source, tally, state, advance));
+        if (area.centerMode && insertedIds.length > 0) await tagCenterMode(db, insertedIds, area.centerMode);
         result.aircraft += 1;
         result.started += advance.started.length;
         if (advance.continued) result.continued += 1;
@@ -174,7 +180,7 @@ export async function withTransaction<T>(db: Queryable, work: (tx: Queryable) =>
   }
 }
 
-async function applyAdvance(db: Queryable, userId: string, icao24: string, area: EncounterArea, source: EncounterSource, tally: TallyRow | null, state: EncounterState, advance: EncounterAdvance) {
+async function applyAdvance(db: Queryable, userId: string, icao24: string, area: EncounterArea, source: EncounterSource, tally: TallyRow | null, state: EncounterState, advance: EncounterAdvance): Promise<string[]> {
   const next = advance.next!;
   // 1. Claim: move the watermark only if nobody else moved it since we read it.
   const claim = tally
@@ -204,6 +210,7 @@ async function applyAdvance(db: Queryable, userId: string, icao24: string, area:
 
   // 3. Insert new encounters.
   let lastId: string | null = null;
+  const insertedIds: string[] = [];
   for (const segment of advance.started) {
     const { rows } = await db.query<{ id: string }>(
       `insert into airintel_private.encounters
@@ -214,6 +221,7 @@ async function applyAdvance(db: Queryable, userId: string, icao24: string, area:
         area.latitude, area.longitude, area.radiusNm, source, NETTED_ALGORITHM_VERSION],
     );
     lastId = rows[0]?.id ?? null;
+    if (lastId) insertedIds.push(lastId);
   }
 
   // 4. Update the lifetime tally.
@@ -242,4 +250,17 @@ async function applyAdvance(db: Queryable, userId: string, icao24: string, area:
       newest?.callsign ?? null, newest?.registration ?? null,
       openId],
   );
+  return insertedIds;
+}
+
+/**
+ * Best-effort tag of how the encounters' center was chosen (migration 0007). Runs after the encounter transaction
+ * commits, so a database without the column (migration not applied yet) still logs encounters; the tag is skipped.
+ */
+async function tagCenterMode(db: Queryable, ids: readonly string[], mode: CenterMode): Promise<void> {
+  try {
+    await db.query("update airintel_private.encounters set center_mode = $2 where id = any($1::uuid[])", [ids, mode]);
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code !== "42703") log("warn", "encounter_center_mode_failed", errorFields(error));
+  }
 }

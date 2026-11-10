@@ -34,14 +34,14 @@ function stubDb(options: StubOptions = {}) {
       if (text.includes("access_grants")) return { rows: [{ allowed: (options.grants ?? ["history"]).includes(String(params?.[1])) }] } as never;
       if (text.includes("set locked_until = now()")) { if (state.leaseHeld) return { rows: [] } as never; state.leaseHeld = true; return { rows: [{ id: true }] } as never; }
       if (text.includes("set locked_until = null")) { state.leaseHeld = false; state.released += 1; return { rows: [] } as never; }
-      if (text.includes("from airintel_private.net_watch_areas") && text.includes("order by last_polled_at")) return { rows: [...areas.values()].filter((row) => row.enabled && row.last_polled_at === null) } as never;
+      if (text.includes("from airintel_private.net_watch_areas") && /order by (w.)?last_polled_at/.test(text)) return { rows: [...areas.values()].filter((row) => row.enabled && row.last_polled_at === null) } as never;
       if (text.includes("update airintel_private.net_watch_areas") && text.includes("set last_polled_at")) { state.polled.push({ ids: params?.[0] as string[], status: String(params?.[1]), success: params?.[2] === true }); return { rows: [] } as never; }
       if (text.includes("insert into airintel_private.net_watch_areas")) {
         const row = area(String(params?.[0]), Number(params?.[1]), Number(params?.[2]), Number(params?.[3]), { enabled: params?.[4] === true });
         areas.set(row.user_id, row);
         return { rows: [row] } as never;
       }
-      if (text.includes("from airintel_private.net_watch_areas where user_id")) return { rows: areas.has(String(params?.[0])) ? [areas.get(String(params?.[0]))] : [] } as never;
+      if (/from airintel_private.net_watch_areas (w )?where (w.)?user_id/.test(text)) return { rows: areas.has(String(params?.[0])) ? [areas.get(String(params?.[0]))] : [] } as never;
       if (text.includes("from airintel_private.net_sweep_state")) return { rows: options.sweepState ? [options.sweepState] : [] } as never;
       if (text.includes("exists (select 1 from airintel_private.net_watch_areas")) return { rows: [{ present: [...areas.values()].some((row) => row.enabled) }] } as never;
       if (text.includes("purge_aircraft_observations")) { state.purged += 1; return { rows: [{ deleted: 7 }] } as never; }

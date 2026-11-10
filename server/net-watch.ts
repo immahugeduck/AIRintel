@@ -14,15 +14,19 @@ type AreaRow = {
   last_polled_at: Date | null;
   last_poll_status: string | null;
   last_success_at: Date | null;
+  /** Migration 0007; read through to_jsonb so a database without the column reports false instead of failing. */
+  follow_me: boolean;
 };
 
-const areaColumns = "user_id, latitude, longitude, radius_mi, enabled, created_at, updated_at, last_polled_at, last_poll_status, last_success_at";
+const followMeColumn = "coalesce((to_jsonb(w) ->> 'follow_me')::boolean, false) as follow_me";
+const areaColumns = `w.user_id, w.latitude, w.longitude, w.radius_mi, w.enabled, w.created_at, w.updated_at, w.last_polled_at, w.last_poll_status, w.last_success_at, ${followMeColumn}`;
 
 const toSaved = (row: AreaRow): SavedWatchArea => ({
   latitude: row.latitude,
   longitude: row.longitude,
   radiusMi: row.radius_mi,
   enabled: row.enabled,
+  followMe: row.follow_me === true,
   createdAt: iso(row.created_at)!,
   updatedAt: iso(row.updated_at)!,
 });
@@ -31,7 +35,7 @@ export const toNetStatus = (row: AreaRow | null, now: Date = new Date()): NetSta
   deriveNetStatus(row ? { enabled: row.enabled, updatedAt: iso(row.updated_at), lastSuccessAt: iso(row.last_success_at), lastPolledAt: iso(row.last_polled_at), lastPollStatus: row.last_poll_status } : null, now);
 
 export async function getWatchAreaRow(db: Queryable, userId: string): Promise<AreaRow | null> {
-  const { rows } = await db.query<AreaRow>(`select ${areaColumns} from airintel_private.net_watch_areas where user_id = $1::uuid`, [userId]);
+  const { rows } = await db.query<AreaRow>(`select ${areaColumns} from airintel_private.net_watch_areas w where w.user_id = $1::uuid`, [userId]);
   return rows[0] ?? null;
 }
 
@@ -46,10 +50,12 @@ export const watchAreaResponse = (row: AreaRow | null, now: Date = new Date()): 
  * honestly returns to "pending" until the next sweep covers the new area.
  */
 export async function upsertWatchArea(db: Queryable, userId: string, input: WatchAreaInput): Promise<AreaRow> {
+  // follow_me (migration 0007) is only written when the client sends it, so older clients keep working everywhere.
+  const withFollow = typeof input.followMe === "boolean";
   const { rows } = await db.query<AreaRow>(
-    `insert into airintel_private.net_watch_areas as w (user_id, latitude, longitude, radius_mi, enabled)
-     values ($1::uuid, $2, $3, $4, $5)
-     on conflict (user_id) do update set
+    `insert into airintel_private.net_watch_areas as w (user_id, latitude, longitude, radius_mi, enabled${withFollow ? ", follow_me" : ""})
+     values ($1::uuid, $2, $3, $4, $5${withFollow ? ", $6" : ""})
+     on conflict (user_id) do update set${withFollow ? "\n       follow_me = excluded.follow_me," : ""}
        latitude = excluded.latitude,
        longitude = excluded.longitude,
        radius_mi = excluded.radius_mi,
@@ -62,24 +68,24 @@ export async function upsertWatchArea(db: Queryable, userId: string, input: Watc
          when w.latitude = excluded.latitude and w.longitude = excluded.longitude and w.radius_mi = excluded.radius_mi and w.enabled = excluded.enabled then w.last_poll_status
          else null end
      returning ${areaColumns}`,
-    [userId, input.latitude, input.longitude, input.radiusMi, input.enabled],
+    withFollow ? [userId, input.latitude, input.longitude, input.radiusMi, input.enabled, input.followMe] : [userId, input.latitude, input.longitude, input.radiusMi, input.enabled],
   );
   return rows[0]!;
 }
 
-export type SweepArea = { userId: string; latitude: number; longitude: number; radiusMi: number };
+export type SweepArea = { userId: string; latitude: number; longitude: number; radiusMi: number; followMe?: boolean };
 
 /** Enabled areas not polled within `minIntervalSeconds`, least-recently-polled first (fair rotation when over the cap). */
 export async function loadDueAreas(db: Queryable, options: { minIntervalSeconds: number; limit: number }): Promise<SweepArea[]> {
-  const { rows } = await db.query<Pick<AreaRow, "user_id" | "latitude" | "longitude" | "radius_mi">>(
-    `select user_id, latitude, longitude, radius_mi
-       from airintel_private.net_watch_areas
-      where enabled and (last_polled_at is null or last_polled_at < now() - make_interval(secs => $1::double precision))
-      order by last_polled_at nulls first, user_id
+  const { rows } = await db.query<Pick<AreaRow, "user_id" | "latitude" | "longitude" | "radius_mi" | "follow_me">>(
+    `select w.user_id, w.latitude, w.longitude, w.radius_mi, ${followMeColumn}
+       from airintel_private.net_watch_areas w
+      where w.enabled and (w.last_polled_at is null or w.last_polled_at < now() - make_interval(secs => $1::double precision))
+      order by w.last_polled_at nulls first, w.user_id
       limit $2::integer`,
     [options.minIntervalSeconds, options.limit],
   );
-  return rows.map((row) => ({ userId: row.user_id, latitude: row.latitude, longitude: row.longitude, radiusMi: row.radius_mi }));
+  return rows.map((row) => ({ userId: row.user_id, latitude: row.latitude, longitude: row.longitude, radiusMi: row.radius_mi, followMe: row.follow_me === true }));
 }
 
 export async function markAreasPolled(db: Queryable, userIds: readonly string[], status: string, success: boolean): Promise<void> {

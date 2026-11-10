@@ -11,8 +11,9 @@ export type NetControlState =
   | { kind: "unavailable"; reason: "no-access" | "unconfigured" | "not-migrated" | "error"; message: string }
   | { kind: "ready"; data: WatchAreaResponse };
 
-const sameArea = (a: { latitude: number; longitude: number; radiusMi: number }, b: { latitude: number; longitude: number; radiusMi: number }) =>
-  Math.abs(a.latitude - b.latitude) < 1e-5 && Math.abs(a.longitude - b.longitude) < 1e-5 && Math.abs(a.radiusMi - b.radiusMi) < 1e-9;
+type AreaLike = { latitude: number; longitude: number; radiusMi: number; followMe?: boolean | undefined };
+const sameArea = (a: AreaLike, b: AreaLike) =>
+  Math.abs(a.latitude - b.latitude) < 1e-5 && Math.abs(a.longitude - b.longitude) < 1e-5 && Math.abs(a.radiusMi - b.radiusMi) < 1e-9 && (a.followMe === true) === (b.followMe === true);
 
 export function describeNetError(error: unknown): NetControlState & { kind: "unavailable" } {
   if (error instanceof AccessDeniedError) return { kind: "unavailable", reason: "no-access", message: "Your account needs the history access grant before the net can run while the app is closed." };
@@ -22,13 +23,13 @@ export function describeNetError(error: unknown): NetControlState & { kind: "una
 }
 
 /** True when the account's saved area should replace this browser's area (new device, or changed elsewhere). */
-export function shouldAdoptServerArea(area: WatchArea, saved: { latitude: number; longitude: number; radiusMi: number; updatedAt: string } | null): boolean {
+export function shouldAdoptServerArea(area: WatchArea, saved: { latitude: number; longitude: number; radiusMi: number; updatedAt: string; followMe?: boolean | undefined } | null): boolean {
   if (!saved || sameArea(area, saved)) return false;
   if (area.source === "default" || !area.updatedAt) return true;
   return Date.parse(saved.updatedAt) > Date.parse(area.updatedAt);
 }
 
-type AccountArea = { latitude: number; longitude: number; radiusMi: number; updatedAt: string };
+type AccountArea = { latitude: number; longitude: number; radiusMi: number; updatedAt: string; followMe?: boolean | undefined };
 
 /** True when the area was chosen in this browser during the current signed-in session (not left over from before). */
 const changedThisSession = (area: WatchArea, sessionStartedAt: number) => Boolean(area.updatedAt) && Date.parse(area.updatedAt!) >= sessionStartedAt;
@@ -80,7 +81,7 @@ export function useNet(signedIn: boolean, area: WatchArea, onAdoptArea?: (next: 
     // Toggling uses this browser's area, except a still-default browser must not clobber an already saved area.
     const source = enabled && area.source === "default" && saved ? saved : area;
     try {
-      await mutation.mutateAsync({ latitude: source.latitude, longitude: source.longitude, radiusMi: source.radiusMi, enabled });
+      await mutation.mutateAsync({ latitude: source.latitude, longitude: source.longitude, radiusMi: source.radiusMi, enabled, followMe: source.followMe === true });
     } catch (error) {
       setSaveError(describeNetError(error).message);
     }
@@ -105,22 +106,22 @@ export function useNet(signedIn: boolean, area: WatchArea, onAdoptArea?: (next: 
   }, [clearKey]);
 
   // Load the account's area into this browser.
-  const adoptKey = signedIn && query.isSuccess && !mutation.isPending && shouldAdoptServerArea(area, saved) ? `${saved!.latitude}:${saved!.longitude}:${saved!.radiusMi}:${saved!.updatedAt}` : null;
+  const adoptKey = signedIn && query.isSuccess && !mutation.isPending && shouldAdoptServerArea(area, saved) ? `${saved!.latitude}:${saved!.longitude}:${saved!.radiusMi}:${saved!.followMe}:${saved!.updatedAt}` : null;
   useEffect(() => {
     const { saved: current, onAdoptArea: adopt } = latestAdopt.current;
     if (!adoptKey || !current || !adopt) return;
-    adopt({ latitude: current.latitude, longitude: current.longitude, radiusMi: current.radiusMi, source: "saved", updatedAt: current.updatedAt });
+    adopt({ latitude: current.latitude, longitude: current.longitude, radiusMi: current.radiusMi, source: "saved", updatedAt: current.updatedAt, followMe: current.followMe === true });
   }, [adoptKey]);
 
   // Save a newer browser area to the account.
-  const syncKey = signedIn && query.isSuccess && shouldSaveBrowserArea(area, saved, sessionStartedAt) ? `${area.latitude}:${area.longitude}:${area.radiusMi}` : null;
+  const syncKey = signedIn && query.isSuccess && shouldSaveBrowserArea(area, saved, sessionStartedAt) ? `${area.latitude}:${area.longitude}:${area.radiusMi}:${area.followMe === true}` : null;
   const latest = useRef({ area, mutate: mutation.mutate, enabled: saved?.enabled ?? false });
   latest.current = { area, mutate: mutation.mutate, enabled: saved?.enabled ?? false };
   useEffect(() => {
     if (!syncKey) return;
     const timer = setTimeout(() => {
       const { area: current, mutate, enabled } = latest.current;
-      mutate({ latitude: current.latitude, longitude: current.longitude, radiusMi: current.radiusMi, enabled }, { onError: (error) => setSaveError(describeNetError(error).message) });
+      mutate({ latitude: current.latitude, longitude: current.longitude, radiusMi: current.radiusMi, enabled, followMe: current.followMe === true }, { onError: (error) => setSaveError(describeNetError(error).message) });
     }, 1_500);
     return () => clearTimeout(timer);
   }, [syncKey]);

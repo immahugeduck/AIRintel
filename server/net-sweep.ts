@@ -184,7 +184,7 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
       if (totals.inserted + totals.duplicate > 0) {
         const recorded = recorderInput.slice(0, processed);
         for (const member of query.members) {
-          const written = await recordEncounters(deps.db, member.userId, { latitude: member.latitude, longitude: member.longitude, radiusNm: milesToNm(member.radiusMi) }, recorded, "sweep");
+          const written = await recordEncounters(deps.db, member.userId, { latitude: member.latitude, longitude: member.longitude, radiusNm: milesToNm(member.radiusMi), centerMode: member.followMe ? "follow" : "fixed" }, recorded, "sweep");
           summary.encounters.started += written.started;
         }
       }

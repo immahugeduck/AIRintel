@@ -19,6 +19,7 @@ import type { AircraftObservation } from "./domain/aircraft";
 import { NETTED_DEFAULT_HOURS, countRadiusVisits, toNettedDto } from "./domain/netted";
 import { buildRadiusRows } from "./domain/radius-list";
 import { VISIT_GAP_MINUTES, knotsToMph, milesToNm, nmToMiles } from "./domain/units";
+import { useFollowMe } from "./lib/use-follow-me";
 import { useNet } from "./lib/use-net";
 import { useSession } from "./lib/session";
 import { loadWatchArea, saveWatchArea, type WatchArea } from "./lib/watch-area";
@@ -65,6 +66,8 @@ export default function App() {
 
   const updateArea = (next: WatchArea) => { setArea(next); saveWatchArea(next); };
   const net = useNet(signedIn, area, updateArea);
+  const follow = useFollowMe(area, updateArea);
+  const centerMode = area.followMe ? "follow" as const : area.source === "default" ? undefined : "fixed" as const;
   const openDrawer = () => { setDrawerSince(readLastOpened()); setDrawerOpen(true); };
   const closeDrawer = useCallback(() => { setDrawerOpen(false); writeLastOpened(new Date().toISOString()); }, []);
   const go = (next: View) => { setView(next); window.scrollTo({ top: 0 }); };
@@ -72,8 +75,8 @@ export default function App() {
   const query = useMemo(() => ({ latitude, longitude, radiusNm }), [latitude, longitude, radiusNm]);
   const pollMs = Math.max(10, envNumber(import.meta.env.VITE_POLL_INTERVAL_SECONDS, 20)) * 1000;
   const aircraft = useQuery({
-    queryKey: ["aircraft", query, signedIn],
-    queryFn: ({ signal }) => fetchAircraft(query, signal),
+    queryKey: ["aircraft", query, signedIn, centerMode],
+    queryFn: ({ signal }) => fetchAircraft(query, signal, centerMode),
     refetchInterval: pollMs,
     // Polling pauses while the tab is hidden/unfocused and resumes (with an immediate refetch) when it returns.
     refetchIntervalInBackground: false,
@@ -268,7 +271,7 @@ export default function App() {
           )}
           {view === "more" && (
             <div className="stack-lg">
-              <LocationPanel area={area} onChange={updateArea} />
+              <LocationPanel area={area} onChange={updateArea} follow={follow} />
               <NetControl state={net.state} area={area} saving={net.saving} saveError={net.saveError} onToggle={(enabled) => void net.setEnabled(enabled)} onSignIn={() => setAuthPrompt((value) => value + 1)} />
               <section className="panel" aria-labelledby="account-heading">
                 <header className="panel-header"><div><p className="eyebrow">Neon Auth</p><h2 id="account-heading">Account</h2></div></header>

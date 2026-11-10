@@ -15,6 +15,8 @@ export const watchAreaInputSchema = z.object({
   longitude: z.number().finite().min(-180).max(180),
   radiusMi: z.number().finite().min(MIN_WATCH_RADIUS_MI).max(MAX_WATCH_RADIUS_MI).default(WATCH_RADIUS_MI),
   enabled: z.boolean(),
+  /** Follow me: the browser re-centers this area when the phone moves (see src/lib/watch-area.ts). Omitted = unchanged. */
+  followMe: z.boolean().optional(),
 }).strict();
 export type WatchAreaInput = z.infer<typeof watchAreaInputSchema>;
 
@@ -41,6 +43,8 @@ export const savedWatchAreaSchema = z.object({
   longitude: z.number().finite().min(-180).max(180),
   radiusMi: z.number().finite().min(MIN_WATCH_RADIUS_MI).max(MAX_WATCH_RADIUS_MI),
   enabled: z.boolean(),
+  /** Older servers omit it (no follow-me column yet): absent = off. */
+  followMe: z.boolean().optional(),
   createdAt: utc,
   updatedAt: utc,
 });
@@ -101,3 +105,46 @@ export function describeNetStatus(status: NetStatus, now: Date = new Date()): { 
     }
   }
 }
+
+/**
+ * Control circles: up to MAX_CONTROL_AREAS fixed circles the user does NOT visit. The sweep counts the aircraft seen
+ * in each (per UTC day) so an aircraft's presence near the user can be compared with its presence at the controls.
+ */
+export const MAX_CONTROL_AREAS = 2;
+/** A control circle's center must be at least this far from the user's watch center. */
+export const MIN_CONTROL_SEPARATION_MI = 10;
+/** Comparison window for control counts. */
+export const CONTROL_WINDOW_DAYS = 7;
+
+export const controlAreaInputSchema = z.object({
+  slot: z.number().int().min(1).max(MAX_CONTROL_AREAS),
+  label: z.string().trim().max(40).default(""),
+  latitude: z.number().finite().min(-90).max(90),
+  longitude: z.number().finite().min(-180).max(180),
+  radiusMi: z.number().finite().min(MIN_WATCH_RADIUS_MI).max(MAX_WATCH_RADIUS_MI).default(WATCH_RADIUS_MI),
+  enabled: z.boolean().default(true),
+}).strict();
+export type ControlAreaInput = z.input<typeof controlAreaInputSchema>;
+
+export const controlAreaSchema = z.object({
+  slot: z.number().int().min(1).max(MAX_CONTROL_AREAS),
+  label: z.string().max(40),
+  latitude: z.number().finite().min(-90).max(90),
+  longitude: z.number().finite().min(-180).max(180),
+  radiusMi: z.number().finite().min(MIN_WATCH_RADIUS_MI).max(MAX_WATCH_RADIUS_MI),
+  enabled: z.boolean(),
+  updatedAt: utc,
+  lastSuccessAt: utc.nullable(),
+  /** Distinct aircraft seen inside this circle over the comparison window. */
+  aircraftSeen: z.number().int().nonnegative(),
+});
+export type ControlArea = z.infer<typeof controlAreaSchema>;
+
+export const controlAreasResponseSchema = z.object({
+  controlAreas: z.array(controlAreaSchema).max(MAX_CONTROL_AREAS),
+  /** Distinct aircraft in the user's own encounter log over the same window, for the side-by-side comparison. */
+  yourAircraftSeen: z.number().int().nonnegative(),
+  windowDays: z.number().int().positive(),
+  receivedAt: utc,
+});
+export type ControlAreasResponse = z.infer<typeof controlAreasResponseSchema>;

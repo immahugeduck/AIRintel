@@ -8,6 +8,8 @@ const querySchema = z.object({
   lat: z.coerce.number().min(-90).max(90),
   lon: z.coerce.number().min(-180).max(180),
   radiusNm: z.coerce.number().positive().max(100),
+  /** How the live view chose its center (follow-me fix or fixed location); tags the caller's encounters. Optional. */
+  center: z.enum(["follow", "fixed"]).optional(),
 });
 
 /** Live-aircraft gateway. Providers are gated by docs/provider-onboarding.md and ADSB_* env. */
@@ -18,9 +20,9 @@ export function aircraftRoutes(options: { adsb: AdsbProviderConfig | null; recor
     if (!parsed.success) return c.json({ error: "invalid_spatial_query" }, 400);
     if (!options.adsb) return c.json({ error: "provider_not_configured" }, 503);
     try {
-      const result = await fetchLiveAircraft(options.adsb, parsed.data, fetch, { timeoutMs: 8_000, retries: 1 });
+      const result = await fetchLiveAircraft(options.adsb, { lat: parsed.data.lat, lon: parsed.data.lon, radiusNm: parsed.data.radiusNm }, fetch, { timeoutMs: 8_000, retries: 1 });
       // Signed-in users with the history grant contribute these real observations to the flight recorder.
-      const recording = await recordLiveObservations(options.recording ?? null, c.req.header("authorization"), { latitude: parsed.data.lat, longitude: parsed.data.lon, radiusNm: parsed.data.radiusNm }, result);
+      const recording = await recordLiveObservations(options.recording ?? null, c.req.header("authorization"), { latitude: parsed.data.lat, longitude: parsed.data.lon, radiusNm: parsed.data.radiusNm, centerMode: parsed.data.center }, result);
       return c.json({ observations: result.observations, receivedAt: result.receivedAt, sources: result.sources, recording: recording.status });
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? String((error as { code?: string }).code) : "";

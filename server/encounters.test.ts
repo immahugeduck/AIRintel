@@ -60,10 +60,10 @@ describe("advanceEncounters (netted-visits-v1, incremental)", () => {
 });
 
 /** Tiny in-memory model of the two 0006 tables, driven by the exact statements encounters.ts issues. */
-function memoryDb(options: { failOn?: (text: string) => boolean } = {}) {
+function memoryDb(options: { failOn?: (text: string) => boolean; noCenterMode?: boolean } = {}) {
   type Tally = { user_id: string; icao24: string; encounter_count: number; first_encountered_at: Date | null; last_seen_in_radius_at: Date | null; last_observed_at: Date | null; last_inside: boolean; open_encounter_id: string | null; last_callsign: string | null };
   const tallies = new Map<string, Tally>();
-  const encounters = new Map<string, { id: string; user_id: string; icao24: string; observation_count: number; source: string; entered_at: string }>();
+  const encounters = new Map<string, { id: string; user_id: string; icao24: string; observation_count: number; source: string; entered_at: string; center_mode?: string }>();
   let seq = 0;
   let snapshot: { tallies: string; encounters: string } | null = null;
   const log: string[] = [];
@@ -101,6 +101,11 @@ function memoryDb(options: { failOn?: (text: string) => boolean } = {}) {
         const id = `enc-${++seq}`;
         encounters.set(id, { id, user_id: String(p[0]), icao24: String(p[1]), observation_count: Number(p[7]), source: String(p[11]), entered_at: String(p[4]) });
         return rows([{ id }]);
+      }
+      if (text.includes("set center_mode")) {
+        if (options.noCenterMode) throw Object.assign(new Error('column "center_mode" does not exist'), { code: "42703" });
+        for (const id of p[0] as string[]) { const e = encounters.get(id); if (e) e.center_mode = String(p[1]); }
+        return rows([]);
       }
       if (text.includes("update airintel_private.encounters")) { const e = encounters.get(String(p[0])); if (e) e.observation_count += Number(p[3]); return rows([]); }
       if (text.includes("set encounter_count = encounter_count + $3")) {
@@ -182,6 +187,28 @@ describe("recordEncounters (per-account log + lifetime counter)", () => {
     const retry = await recordEncounters(memory.db, userA, area, [inside(0), inside(1)], "sweep");
     expect(retry.started).toBe(1);
     expect(memory.tallies.get(`${userA}:abc123`)?.encounter_count).toBe(1);
+  });
+});
+
+describe("center mode tag (follow me, migration 0007)", () => {
+  it("tags new encounters with how the center was chosen", async () => {
+    const { db, encounters } = memoryDb();
+    await recordEncounters(db, userA, { ...area, centerMode: "follow" }, [inside(0)], "live");
+    expect([...encounters.values()].map((e) => e.center_mode)).toEqual(["follow"]);
+  });
+
+  it("still logs encounters when the column is missing (migration not applied yet)", async () => {
+    const { db, encounters, tallies } = memoryDb({ noCenterMode: true });
+    const result = await recordEncounters(db, userA, { ...area, centerMode: "fixed" }, [inside(0)], "sweep");
+    expect(result.started).toBe(1);
+    expect([...encounters.values()]).toHaveLength(1);
+    expect(tallies.get(`${userA}:abc123`)?.encounter_count).toBe(1);
+  });
+
+  it("leaves the tag unset when the caller did not say", async () => {
+    const { db, encounters } = memoryDb();
+    await recordEncounters(db, userA, area, [inside(0)], "live");
+    expect([...encounters.values()][0]!.center_mode).toBeUndefined();
   });
 });
 

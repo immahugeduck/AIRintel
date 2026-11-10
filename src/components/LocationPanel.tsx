@@ -1,8 +1,9 @@
 import { useEffect, useId, useState, type FormEvent } from "react";
 import { MAX_WATCH_RADIUS_MI, MIN_WATCH_RADIUS_MI } from "../domain/units";
-import { clampRadiusMi, geolocationErrorMessage, type WatchArea } from "../lib/watch-area";
+import type { FollowState } from "../lib/use-follow-me";
+import { FOLLOW_RECENTER_MI, clampRadiusMi, geolocationErrorMessage, type WatchArea } from "../lib/watch-area";
 
-type Props = { area: WatchArea; onChange: (area: WatchArea) => void };
+type Props = { area: WatchArea; onChange: (area: WatchArea) => void; follow?: FollowState };
 
 const RADIUS_PRESETS = [3, 7, 10, 25];
 const sourceLabel: Record<WatchArea["source"], string> = {
@@ -12,7 +13,7 @@ const sourceLabel: Record<WatchArea["source"], string> = {
 };
 
 /** "My location" + radius (statute miles). Geolocation is only requested after an explicit tap. */
-export function LocationPanel({ area, onChange }: Props) {
+export function LocationPanel({ area, onChange, follow = { kind: "off" } }: Props) {
   const ids = useId();
   const [locating, setLocating] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
@@ -43,8 +44,11 @@ export function LocationPanel({ area, onChange }: Props) {
     if (!lat.trim() || !Number.isFinite(latitude) || latitude < -90 || latitude > 90) { setManualError("Latitude must be between -90 and 90."); return; }
     if (!lon.trim() || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) { setManualError("Longitude must be between -180 and 180."); return; }
     setManualError(null);
-    onChange({ ...area, latitude, longitude, source: "saved", updatedAt: new Date().toISOString() });
+    // A manually entered center is a fixed place: it turns follow me off so the next fix does not move it away.
+    onChange({ ...area, latitude, longitude, source: "saved", followMe: false, updatedAt: new Date().toISOString() });
   };
+
+  const setFollow = (followMe: boolean) => onChange({ ...area, followMe, updatedAt: new Date().toISOString() });
 
   const setRadius = (value: number) => onChange({ ...area, radiusMi: clampRadiusMi(value), updatedAt: new Date().toISOString() });
 
@@ -65,6 +69,19 @@ export function LocationPanel({ area, onChange }: Props) {
         </button>
         {geoError && <p className="notice notice-warn" role="alert">{geoError}</p>}
       </div>
+
+      <div className="switch-row follow-row">
+        <div className="switch-copy">
+          <label id={`${ids}-follow-label`} htmlFor={`${ids}-follow`}>Follow me</label>
+          <span id={`${ids}-follow-desc`} className="fine-print">
+            {area.followMe ? followText(follow) : `Re-centers the watch circle when your phone moves more than ${FOLLOW_RECENTER_MI} mi, while the app is open. Each logged entry keeps the location it was measured from.`}
+          </span>
+        </div>
+        <button id={`${ids}-follow`} type="button" role="switch" className="switch" aria-checked={area.followMe === true} aria-labelledby={`${ids}-follow-label`} aria-describedby={`${ids}-follow-desc`} onClick={() => setFollow(!area.followMe)}>
+          <span className="switch-thumb" aria-hidden="true" />
+        </button>
+      </div>
+      {area.followMe && follow.kind === "error" && <p className="notice notice-warn" role="alert">{follow.message}</p>}
 
       <div className="field">
         <label htmlFor={`${ids}-radius`}>Radius <strong className="mono">{area.radiusMi} mi</strong></label>
@@ -88,3 +105,12 @@ export function LocationPanel({ area, onChange }: Props) {
 }
 
 const round = (value: number) => Math.round(value * 10_000) / 10_000;
+
+function followText(follow: FollowState): string {
+  switch (follow.kind) {
+    case "waiting": return "Waiting for your phone's location…";
+    case "following": return `Following your phone${follow.accuracyM !== null ? ` (±${Math.round(follow.accuracyM)} m)` : ""}. The circle moves after ${FOLLOW_RECENTER_MI} mi; it stays put while the app is closed.`;
+    case "error": return "Follow me is on but your location is unavailable.";
+    default: return "Follow me is on.";
+  }
+}

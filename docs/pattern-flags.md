@@ -26,8 +26,11 @@ positions and cannot run pass 3.
 
 ## Limitations (Unknown, not guessed)
 
-- The watch center is set once per tap of **Use my current location**; it does not follow the phone. Pass 3 can only
-  fire for places where a center was actually set.
+- **Follow me** (Location panel) re-centers the watch circle whenever the phone is more than 1 mi from it, while the
+  app is open; each encounter stores its center and `center_mode` (`follow` / `fixed`, migration 0007). With follow
+  me off, the center is set once per tap of **Use my current location**, and pass 3 can only fire for places where a
+  center was actually set. While the app is closed the always-on net keeps the last center (browsers cannot report
+  location in the background).
 - With 5-minute sweeps most visits have 1–2 positions, so circling is only detectable while the app is open (live view)
   or with 1-minute polling. Such aircraft are marked `coverage: "sparse"`.
 - Lists are regional defaults; extend `TRAINING_FLEETS` for your area.
