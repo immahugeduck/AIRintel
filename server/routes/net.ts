@@ -5,6 +5,7 @@ import type { NetConfig } from "../config.js";
 import type { Queryable } from "../db.js";
 import { log, errorFields } from "../logger.js";
 import { SweepNotReadyError, runSweep } from "../net-sweep.js";
+import { buildId } from "../build-info.js";
 import type { AdsbProviderConfig, ProviderFetchOptions } from "../providers/adsb.js";
 
 /** Constant-time string comparison: hashes both sides so length differences do not leak through timing. */
@@ -48,7 +49,7 @@ export function netRoutes(deps: NetRouteDeps) {
     try {
       const summary = await runSweep({ db: deps.db, adsb: deps.adsb, net: deps.net, ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}), ...(deps.providerOptions ? { providerOptions: deps.providerOptions } : {}) });
       log(summary.ok ? "info" : "error", "net_sweep", { status: summary.status, durationMs: summary.durationMs, queried: summary.areas.queried, covered: summary.areas.covered, deferred: summary.areas.deferred, fetched: summary.observations.fetched, inserted: summary.observations.inserted, rejected: summary.observations.rejected });
-      return c.json(summary, summary.status === "failed" ? 502 : 200, noStore);
+      return c.json({ ...summary, build: buildId() }, summary.status === "failed" ? 502 : 200, noStore);
     } catch (error) {
       if (error instanceof SweepNotReadyError) return c.json({ error: "net_not_migrated" }, 503, noStore);
       log("error", "net_sweep_failed", errorFields(error));

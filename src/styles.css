@@ -574,6 +574,7 @@ input[type="range"] { width: 100%; min-height: var(--tap); accent-color: var(--a
 .pattern-badge.is-priority { color: var(--danger); background: var(--danger-soft); border-color: rgba(242, 149, 138, .45); }
 .pattern-badge.is-review { color: var(--warn); background: var(--warn-soft); border-color: rgba(233, 196, 106, .45); }
 .pattern-badge.is-routine { color: var(--muted, #8a97a6); background: transparent; border-color: rgba(138, 151, 166, .35); font-weight: 600; }
+.pattern-badge.is-insufficient { color: var(--muted, #8a97a6); background: transparent; border: 1px dashed rgba(138, 151, 166, .35); font-weight: 500; text-transform: none; letter-spacing: 0; }
 .netted-card:has(.pattern-badge.is-priority) { border-left: 3px solid var(--danger); }
 .netted-card:has(.pattern-badge.is-review) { border-left: 3px solid var(--warn); }
 .pattern-filter { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .25rem 0 .75rem; }

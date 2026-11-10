@@ -13,7 +13,7 @@ import { NetStatusLine } from "./NetControl";
 
 export type NettedState =
   | { kind: "loading" }
-  | { kind: "ready"; aircraft: NettedAircraft[]; hours: number; truncated: boolean; source: "recorded"; net?: NetStatus | null | undefined; /** Counts are lifetime totals from the account's saved encounter log. */ lifetime?: boolean | undefined }
+  | { kind: "ready"; aircraft: NettedAircraft[]; hours: number; truncated: boolean; source: "recorded"; net?: NetStatus | null | undefined; /** Counts are lifetime totals from the account's saved encounter log. */ lifetime?: boolean | undefined; /** Whether pattern flags are complete. */ patternStatus?: { state: "ok" | "partial" | "failed"; detail: string | null } | null | undefined }
   | { kind: "session"; aircraft: NettedAircraft[]; reason: "signed-out" | "no-access" | "unconfigured" | "error"; message?: string };
 
 type Props = {
@@ -41,11 +41,12 @@ const isFlagged = (item: NettedAircraft) => item.pattern?.tier === "priority" ||
 /** Review-priority badge. Wording describes recorded behavior only; it never asserts intent or surveillance. */
 export function PatternBadge({ pattern }: { pattern: PatternAssessment | null | undefined }) {
   if (!pattern || pattern.tier === "low") return null;
+  if (pattern.tier === "insufficient") return <span className="pattern-badge is-insufficient" title="Too few recorded positions to judge behavior">Not enough data</span>;
   const label = pattern.tier === "routine" ? `Routine${pattern.explainedBy ? ` · ${shortExplanation(pattern.explainedBy)}` : ""}` : PATTERN_TIER_LABEL[pattern.tier];
   return <span className={`pattern-badge is-${pattern.tier}`} title={pattern.tier === "routine" ? pattern.explainedBy ?? undefined : `Score ${pattern.score}`}>{label}</span>;
 }
 
-const shortExplanation = (text: string) => (/training/i.test(text) ? "flight school" : /cargo/i.test(text) ? "cargo" : /fractional|charter/i.test(text) ? "charter jet" : /flight number/i.test(text) ? "airline" : /cruise/i.test(text) ? "transit" : /climb|descend/i.test(text) ? "arrival/departure" : "explained");
+const shortExplanation = (text: string) => (/training/i.test(text) ? "flight school" : /cargo/i.test(text) ? "cargo" : /fractional|charter/i.test(text) ? "charter jet" : /flight number/i.test(text) ? "airline" : /cruise/i.test(text) ? "transit" : /climb|descend/i.test(text) ? "arrival/departure" : /traffic pattern/i.test(text) ? "airport pattern" : "explained");
 
 /** "Why flagged": every reason with its evidence label (Observed / Calculated / Supported inference / Unknown). */
 export function PatternReasons({ pattern }: { pattern: PatternAssessment }) {
@@ -174,6 +175,10 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
       )}
       {state.kind === "ready" && state.truncated && <p className="notice notice-warn">{lifetime ? "Showing your 500 most recently encountered aircraft." : "Only part of the recorded window could be scanned. Counts may be low; try a shorter period."}</p>}
 
+      {state.kind === "ready" && state.patternStatus && state.patternStatus.state !== "ok" && (
+        <p className={`notice ${state.patternStatus.state === "failed" ? "notice-error" : "notice-warn"}`} role="status">{state.patternStatus.detail ?? (state.patternStatus.state === "failed" ? "Pattern flags could not be scored right now." : "Pattern flags are incomplete.")}</p>
+      )}
+
       {hasPatterns && (
         <div className="pattern-filter" role="group" aria-label="Filter by review priority">
           <span className="hint">{flaggedCount} flagged for review</span>
@@ -204,7 +209,7 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
                   <button type="button" className="netted-main" aria-pressed={selected} onClick={() => onSelect(item.icao24)}>
                     <span className="netted-callsign mono">{item.callsign ?? <span className="unknown">Unknown</span>}</span>
                     <PatternBadge pattern={item.pattern} />
-                    <span className="netted-ident">{item.registration ?? (item.registryRegistration ? `${item.registryRegistration} (FAA)` : "Registration unknown")} · {item.aircraftTypeCode ?? "Type unknown"}</span>
+                    <span className="netted-ident">{item.registration ?? (item.registryRegistration ? `${item.registryRegistration} (FAA)` : "Registration unknown")} · {item.aircraftTypeCode ?? (item.registryModel ? `${item.registryModel} (FAA)` : "Type unknown")}</span>
                   </button>
                   <span className="visit-counter" aria-label={`Entered the radius ${item.visitCount} ${item.visitCount === 1 ? "time" : "times"}${lifetime ? " in total" : ""}`}>
                     <strong className="mono">{item.visitCount}×</strong><small>{lifetime ? (item.visitCount === 1 ? "encounter" : "encounters") : item.visitCount === 1 ? "entry" : "entries"}</small>

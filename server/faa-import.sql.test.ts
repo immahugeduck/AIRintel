@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 // @ts-expect-error -- plain ESM operator script without type declarations
 import { importSnapshot, registrantFor } from "../scripts/lib/faa.mjs";
 import type { Queryable } from "./db.js";
-import { lookupCurrentRegistry, lookupRegistryRegistrations } from "./registry.js";
+import { lookupCurrentRegistry, lookupRegistryIdentities, lookupRegistryRegistrations } from "./registry.js";
 
 // SYNTHETIC TEST VECTORS ONLY (invented N-numbers, names and addresses), in an ephemeral WASM PostgreSQL instance.
 const HEADER = "N-NUMBER,SERIAL NUMBER,MFR MDL CODE,ENG MFR MDL,YEAR MFR,TYPE REGISTRANT,NAME,STREET,STREET2,CITY,STATE,ZIP CODE,REGION,COUNTY,COUNTRY,LAST ACTION DATE,CERT ISSUE DATE,CERTIFICATION,TYPE AIRCRAFT,TYPE ENGINE,STATUS CODE,MODE S CODE,FRACT OWNER,AIR WORTH DATE,OTHER NAMES(1),OTHER NAMES(2),OTHER NAMES(3),OTHER NAMES(4),OTHER NAMES(5),EXPIRATION DATE,UNIQUE ID,KIT MFR, KIT MODEL,MODE S CODE HEX,";
@@ -99,6 +99,24 @@ describe("lookupRegistryRegistrations (netted list fallback)", () => {
     expect((await lookupRegistryRegistrations(db, ["abcdef"])).has("abcdef")).toBe(false);
     const broken: Queryable = { query: async () => { throw new Error("boom"); } };
     expect(await lookupRegistryRegistrations(broken, ["abcdef"])).toEqual(new Map());
+  });
+});
+
+describe("lookupRegistryIdentities (pattern identity signals + type fallback)", () => {
+  it("returns owner kind, displayable owner name, FAA model and aircraft type for exact Mode-S matches", async () => {
+    await run(true);
+    const identities = await lookupRegistryIdentities(db, ["abcdef", "abcde0", "zzzzzz"]);
+    expect(identities.get("abcdef")).toEqual({ nNumber: "N99ZZ", registrantKind: "business", registrantName: "SYNTHETIC AVIATION LLC", model: "CESSNA 172S", faaAircraftType: "4" });
+    // Individuals stay redacted: kind only, never a name.
+    expect(identities.get("abcde0")).toMatchObject({ nNumber: "N98YY", registrantKind: "individual", registrantName: null });
+    expect(identities.has("zzzzzz")).toBe(false);
+  });
+
+  it("returns nothing before a snapshot is published, and never throws", async () => {
+    await run(false);
+    expect(await lookupRegistryIdentities(db, ["abcdef"])).toEqual(new Map());
+    const broken: Queryable = { query: async () => { throw new Error("boom"); } };
+    expect(await lookupRegistryIdentities(broken, ["abcdef"])).toEqual(new Map());
   });
 });
 

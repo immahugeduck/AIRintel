@@ -146,21 +146,46 @@ export type HealthNet = {
   /** idle: nothing enabled · ok: swept within the stale window · stale: enabled areas but no recent sweep · never: enabled but never swept · unknown: not migrated / database unreachable */
   state: "idle" | "ok" | "stale" | "never" | "unknown";
   lastSweepAgeSeconds: number | null;
+  /**
+   * Sweep encounters created in the last hour and how many lack the follow/fixed center tag (migration 0007). Current
+   * code always tags sweep encounters, so untagged ones mean another, older deployment is running the sweep.
+   */
+  recentEncounters?: { total: number; untagged: number } | null;
+  writer?: "current" | "mixed" | "stale_suspected" | "unknown";
   /** Machine status of the last sweep run (e.g. completed, partial, failed); no counts, no coordinates. */
   lastStatus: string | null;
 };
 
 /** Net freshness for GET /health. Bounded by a short timeout; never throws; leaks no secrets or user data. */
+const writerFrom = (recent: { total: number; untagged: number } | null): NonNullable<HealthNet["writer"]> =>
+  !recent || recent.total === 0 ? "unknown" : recent.untagged === 0 ? "current" : recent.untagged >= recent.total ? "stale_suspected" : "mixed";
+
+/** Counts only, never identities. Null when the column or table is missing or the query fails. */
+async function recentEncounterTagging(db: Queryable): Promise<{ total: number; untagged: number } | null> {
+  try {
+    const { rows } = await db.query<{ total: number; untagged: number }>(
+      `select count(*)::int as total, count(*) filter (where center_mode is null)::int as untagged
+         from airintel_private.encounters
+        where source = 'sweep' and created_at >= now() - interval '1 hour'`,
+      [],
+    );
+    return rows[0] ? { total: Number(rows[0].total), untagged: Number(rows[0].untagged) } : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function healthNet(db: Queryable, staleAfterMinutes: number, now: Date = new Date(), timeoutMs = 2_000): Promise<HealthNet> {
   const unknown: HealthNet = { state: "unknown", lastSweepAgeSeconds: null, lastStatus: null };
   const work = (async (): Promise<HealthNet> => {
-    const [state, enabled] = await Promise.all([getSweepState(db), hasEnabledAreas(db)]);
+    const [state, enabled, recentEncounters] = await Promise.all([getSweepState(db), hasEnabledAreas(db), recentEncounterTagging(db)]);
     const last = state?.last_finished_at ?? null;
     const ageSeconds = last ? Math.max(0, Math.round((now.getTime() - last.getTime()) / 1000)) : null;
     const lastStatus = state?.last_status ?? null;
-    if (!enabled) return { state: "idle", lastSweepAgeSeconds: ageSeconds, lastStatus };
-    if (ageSeconds === null) return { state: "never", lastSweepAgeSeconds: null, lastStatus };
-    return { state: ageSeconds > staleAfterMinutes * 60 ? "stale" : "ok", lastSweepAgeSeconds: ageSeconds, lastStatus };
+    const tagging = { recentEncounters, writer: writerFrom(recentEncounters) };
+    if (!enabled) return { state: "idle", lastSweepAgeSeconds: ageSeconds, lastStatus, ...tagging };
+    if (ageSeconds === null) return { state: "never", lastSweepAgeSeconds: null, lastStatus, ...tagging };
+    return { state: ageSeconds > staleAfterMinutes * 60 ? "stale" : "ok", lastSweepAgeSeconds: ageSeconds, lastStatus, ...tagging };
   })().catch(() => unknown);
   const timeout = new Promise<HealthNet>((resolve) => { setTimeout(() => resolve(unknown), timeoutMs).unref?.(); });
   return Promise.race([work, timeout]);
