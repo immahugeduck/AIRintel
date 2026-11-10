@@ -86,3 +86,42 @@ export async function lookupCurrentRegistry(db: Queryable, aircraft: { id: strin
     status: "confirmed", unavailableReason: null, snapshotEffectiveAt,
   };
 }
+
+/**
+ * List-view fallback: FAA N-numbers for aircraft that broadcast no registration, from the newest published,
+ * non-future snapshot. Fails closed like lookupCurrentRegistry: only a single exact Mode-S record counts, and an
+ * aircraft with a rejected or conflicting persisted match gets nothing. Never throws (empty map on any failure,
+ * including a database without the registry tables). The full owner/provenance checks stay in the profile view.
+ */
+export async function lookupRegistryRegistrations(db: Queryable, icaos: readonly string[], asOf: Date = new Date()): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const wanted = [...new Set(icaos.filter((icao) => /^[0-9a-f]{6}$/.test(icao)))];
+  if (wanted.length === 0) return result;
+  try {
+    const { rows } = await db.query<{ mode_s_hex: string; n_number: string }>(
+      `with snapshot as (
+         select id from airintel_private.faa_import_runs
+          where status = 'published' and snapshot_date <= $2::date
+          order by snapshot_date desc, finished_at desc nulls last, started_at desc, id desc limit 1
+       ), candidates as (
+         select r.mode_s_hex, min(r.n_number) as n_number, count(*) as records
+           from public.aircraft_registry_records r
+          where r.import_run_id = (select id from snapshot) and r.mode_s_hex = any($1::text[])
+          group by r.mode_s_hex
+       )
+       select c.mode_s_hex, c.n_number
+         from candidates c
+        where c.records = 1
+          and not exists (
+            select 1 from public.aircraft a
+              join public.aircraft_registry_matches m on m.aircraft_id = a.id
+             where a.icao24 = c.mode_s_hex and (m.match_status = 'conflict' or m.manual_review_status = 'rejected')
+          )`,
+      [wanted, asOf.toISOString().slice(0, 10)],
+    );
+    for (const row of rows) result.set(row.mode_s_hex, row.n_number);
+  } catch {
+    result.clear();
+  }
+  return result;
+}

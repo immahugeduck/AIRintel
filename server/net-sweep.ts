@@ -5,6 +5,7 @@ import type { NetConfig } from "./config.js";
 import type { Queryable } from "./db.js";
 import { log, errorFields } from "./logger.js";
 import { acquireSweepLease, getSweepState, loadDueAreas, markAreasPolled, purgeOldObservations, releaseSweepLease, type SweepArea } from "./net-watch.js";
+import { loadDueControlAreas, markControlAreasPolled, recordControlSightings, type ControlSweepArea } from "./control-areas.js";
 import { recordEncounters } from "./encounters.js";
 import { toRecorderObservations } from "./live-recording.js";
 import { fetchLiveAircraft, type AdsbProviderConfig, type LiveAircraftResult, type ProviderFetchOptions } from "./providers/adsb.js";
@@ -41,12 +42,26 @@ export type SweepSummary = {
   observations: { fetched: number; inserted: number; duplicate: number; rejected: number };
   /** New per-account encounters detected by this sweep (counts only). */
   encounters: { started: number };
+  /** Control circles (migration 0007) swept, and the (aircraft, day) sighting rows they updated. */
+  controls: { swept: number; sightings: number };
   errors: { code: string; count: number }[];
   retention?: { deleted: number };
 };
 
-export type PlannedQuery = { latitude: number; longitude: number; radiusNm: number; members: SweepArea[] };
-export type SweepPlan = { queries: PlannedQuery[]; covered: number; deferred: SweepArea[] };
+/** A watch area (encounters for its owner) or a control circle (day counts only). */
+export type SweepMember = SweepArea | ControlSweepArea;
+export type PlannedQuery = { latitude: number; longitude: number; radiusNm: number; members: SweepMember[] };
+export type SweepPlan = { queries: PlannedQuery[]; covered: number; deferred: SweepMember[] };
+
+const isControl = (member: SweepMember): member is ControlSweepArea => (member as ControlSweepArea).kind === "control";
+
+/** Marks every member polled in its own table (watch areas by owner, control circles by id). */
+async function markPolled(db: Queryable, members: readonly SweepMember[], status: string, success: boolean): Promise<void> {
+  await Promise.all([
+    markAreasPolled(db, members.filter((m) => !isControl(m)).map((m) => m.userId), status, success),
+    markControlAreasPolled(db, members.filter(isControl).map((m) => m.controlId), status, success),
+  ]);
+}
 
 /** Provider query radius for one area: radius x margin (so exits/entries are observed), capped. */
 export const fetchRadiusNm = (radiusMi: number, marginFactor: number) => Math.min(MAX_FETCH_RADIUS_NM, Math.max(1, milesToNm(radiusMi) * marginFactor));
@@ -56,9 +71,9 @@ export const fetchRadiusNm = (radiusMi: number, marginFactor: number) => Math.mi
  * fetch circle lies entirely inside an already planned query rides on that query (the data is global, so nothing is
  * fetched twice). When more than `maxQueries` distinct queries would be needed, the rest are deferred to the next sweep.
  */
-export function planSweep(areas: readonly SweepArea[], marginFactor: number, maxQueries: number): SweepPlan {
+export function planSweep(areas: readonly SweepMember[], marginFactor: number, maxQueries: number): SweepPlan {
   const queries: PlannedQuery[] = [];
-  const deferred: SweepArea[] = [];
+  const deferred: SweepMember[] = [];
   let covered = 0;
   for (const area of areas) {
     const radiusNm = fetchRadiusNm(area.radiusMi, marginFactor);
@@ -115,6 +130,7 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
     areas: { due: 0, queried: 0, covered: 0, deferred: 0 },
     observations: { fetched: 0, inserted: 0, duplicate: 0, rejected: 0 },
     encounters: { started: 0 },
+    controls: { swept: 0, sightings: 0 },
     errors: [],
   };
   const finish = (status: SweepStatus): SweepSummary => {
@@ -137,7 +153,12 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
   if (!leased) return finish("skipped_locked");
 
   try {
-    const due = await loadDueAreas(deps.db, { minIntervalSeconds: deps.net.minIntervalSeconds, limit: Math.max(deps.net.maxAreas * 4, 100) });
+    const limit = Math.max(deps.net.maxAreas * 4, 100);
+    // Watch areas first: control circles only fill provider queries that are left (or ride on overlapping ones).
+    const due: SweepMember[] = [
+      ...await loadDueAreas(deps.db, { minIntervalSeconds: deps.net.minIntervalSeconds, limit }),
+      ...await loadDueControlAreas(deps.db, { minIntervalSeconds: deps.net.minIntervalSeconds, limit }),
+    ];
     summary.areas.due = due.length;
     const plan = planSweep(due, deps.net.marginFactor, deps.net.maxAreas);
     summary.areas.covered = plan.covered;
@@ -156,7 +177,6 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
       summary.areas.queried += 1;
       const remaining = deps.net.budgetMs - elapsed;
       const providerOptions: ProviderFetchOptions = { ...providerAttemptOptions(remaining), ...deps.providerOptions };
-      const memberIds = query.members.map((member) => member.userId);
       let result: LiveAircraftResult;
       try {
         result = await fetchLiveAircraft(deps.adsb, { lat: query.latitude, lon: query.longitude, radiusNm: query.radiusNm }, deps.fetchImpl ?? fetch, providerOptions);
@@ -165,7 +185,7 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
         addError(code);
         failedQueries += 1;
         log("warn", "net_sweep_provider_failed", { code, ...errorFields(error) });
-        await markAreasPolled(deps.db, memberIds, code === "provider_timeout" || code === "provider_upstream_failed" || code === "provider_network_error" ? "provider_error" : code, false).catch((e) => log("error", "net_sweep_mark_failed", errorFields(e)));
+        await markPolled(deps.db, query.members, code === "provider_timeout" || code === "provider_upstream_failed" || code === "provider_network_error" ? "provider_error" : code, false).catch((e) => log("error", "net_sweep_mark_failed", errorFields(e)));
         continue;
       }
       summary.observations.fetched += result.observations.length;
@@ -184,7 +204,17 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
       if (totals.inserted + totals.duplicate > 0) {
         const recorded = recorderInput.slice(0, processed);
         for (const member of query.members) {
-          const written = await recordEncounters(deps.db, member.userId, { latitude: member.latitude, longitude: member.longitude, radiusNm: milesToNm(member.radiusMi) }, recorded, "sweep");
+          if (isControl(member)) {
+            try {
+              summary.controls.sightings += await recordControlSightings(deps.db, member, recorded);
+              summary.controls.swept += 1;
+            } catch (error) {
+              addError("control_record_failed");
+              log("error", "net_sweep_control_failed", errorFields(error));
+            }
+            continue;
+          }
+          const written = await recordEncounters(deps.db, member.userId, { latitude: member.latitude, longitude: member.longitude, radiusNm: milesToNm(member.radiusMi), centerMode: member.followMe ? "follow" : "fixed" }, recorded, "sweep");
           summary.encounters.started += written.started;
         }
       }
@@ -196,7 +226,7 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
       let success = true;
       if (totals.rejected > 0 && totals.inserted + totals.duplicate === 0) { status = "record_error"; success = false; addError("record_failed"); failedQueries += 1; }
       else if (totals.rejected > 0 || cut) { status = "partial"; if (cut) addError("sweep_budget_exhausted"); }
-      await markAreasPolled(deps.db, memberIds, status, success).catch((e) => log("error", "net_sweep_mark_failed", errorFields(e)));
+      await markPolled(deps.db, query.members, status, success).catch((e) => log("error", "net_sweep_mark_failed", errorFields(e)));
     }
 
     if (deps.net.retentionDays && now() - started < deps.net.budgetMs) {

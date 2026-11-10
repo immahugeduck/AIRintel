@@ -42,6 +42,7 @@ const DEFAULT_NET: NetConfig = { maxAreas: 25, marginFactor: 2, minIntervalSecon
  *   GET /aircraft-nearby      live ADS-B gateway (provider-gated); records to the flight recorder for JWT + "history" callers
  *   GET /history              search / track / insights / route-summary / nearby / netted / watch-area   (JWT + "history" grant)
  *   PUT /history?action=watch-area   save / enable / pause the always-on net            (JWT + "history" grant)
+ *   PUT|DELETE /history?action=control-areas   save / remove a fixed control circle (JWT + "history" grant)
  *   GET|POST /net/sweep       always-on net sweep, Bearer CRON_SECRET (fails closed when unset)
  *   GET /aircraft-profile     FAA-registry-backed profile                          (JWT + "profile" grant)
  *   GET /satellites-nearby    CelesTrak/SGP4 positions
@@ -81,7 +82,7 @@ export function createApp(deps: AppDependencies) {
   app.route("/satellite-passes", satellitePassesRoutes());
 
   const historyLimiter = new RateLimiter(deps.historyRateLimit ?? 30);
-  app.use("/history", originGuardForMethods(deps.allowedOrigins, ["GET", "PUT"]));
+  app.use("/history", originGuardForMethods(deps.allowedOrigins, ["GET", "PUT", "DELETE"]));
   app.use("/history", requireAccess({ db: deps.db, verifier: deps.verifier, scope: "history", deniedError: "history_access_denied", limiter: historyLimiter }));
   if (deps.db) app.route("/history", historyRoutes(deps.db));
 

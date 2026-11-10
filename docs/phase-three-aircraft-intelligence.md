@@ -56,3 +56,28 @@ The runtime database role needs SELECT access to import-run metadata and retaine
 raw observations, in addition to its existing profile tables. No role/grant changes
 are made by this patch. Production population and signed-in profile behavior have
 not been verified, and no real database has been populated or modified.
+
+
+## FAA import (November 10, 2026)
+
+`npm run faa:import` loads an official FAA Releasable Aircraft Database snapshot (`scripts/lib/faa.mjs`):
+
+1. Download `ReleasableAircraft.zip` from faa.gov (Aircraft Registry → Releasable Aircraft Database) and unzip it.
+2. Stage it (no user-visible change):
+   `DATABASE_URL_UNPOOLED=... npm run faa:import -- --input MASTER.txt --acftref ACFTREF.txt --snapshot-date <date on the FAA page>`
+3. Review the JSON summary (row counts, error codes; no names), then publish the same file:
+   `... npm run faa:import -- --input MASTER.txt --acftref ACFTREF.txt --snapshot-date <same date> --publish`
+   The file is recognized by SHA-256, so publishing only promotes the validated run.
+
+One transaction per run: expired raw rows are purged first (`purge_expired_faa_registry_raw()`), each row is staged in
+`airintel_private.faa_registry_raw` (accepted / quarantined, 30-day retention) and accepted rows go to
+`public.aircraft_registry_records`. More than 5% quarantined rows marks the run `rejected` (never published).
+Street address lines and ZIP codes are dropped before anything is stored. Natural-person registrants (individuals,
+co-owners) are stored as `individual_redacted` with no name; only business, government, partnership and LLC
+registrants are displayable. Re-run the import (and therefore the purge) at least monthly; the raw-row purge still has
+no scheduler of its own.
+
+Once a snapshot is published, the profile view resolves owners as described above, and the Netted list shows the
+FAA N-number (marked "(FAA)") for aircraft that broadcast no registration — exact, unique Mode-S match only, failing
+closed on rejected or conflicting persisted matches (`lookupRegistryRegistrations`). That also clears the
+"No registration on record" identity-gap reason in pattern flags.

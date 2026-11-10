@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { distanceNm } from "./geometry.js";
 import { netStatusSchema } from "./net.js";
+import { patternAssessmentSchema } from "./patterns.js";
 import { MAX_WATCH_RADIUS_MI, MIN_WATCH_RADIUS_MI, VISIT_GAP_MINUTES, WATCH_RADIUS_MI, milesToNm, nmToMiles } from "./units.js";
 
 /**
@@ -119,6 +120,9 @@ export const radiusVisitSchema = z.object({
   lastSeenInRadiusAt: utc,
   closestMi: z.number().finite().nonnegative(),
   observationCount: z.number().int().positive(),
+  /** Watch center this entry was measured against (log scope). Older servers omit it. */
+  centerLatitude: z.number().finite().min(-90).max(90).nullish(),
+  centerLongitude: z.number().finite().min(-180).max(180).nullish(),
 });
 export type NettedVisit = z.infer<typeof radiusVisitSchema>;
 
@@ -126,6 +130,11 @@ export const nettedAircraftSchema = z.object({
   icao24: z.string().regex(/^[0-9a-f]{6}$/),
   callsign: z.string().trim().min(1).nullable(),
   registration: z.string().trim().min(1).nullable(),
+  /**
+   * N-number from the published FAA registry snapshot (exact Mode-S match) when the aircraft broadcast no registration.
+   * Older servers omit it.
+   */
+  registryRegistration: z.string().trim().min(1).nullish(),
   /** Provider-reported ICAO type designator from the latest retained raw observation, when present. */
   aircraftTypeCode: z.string().trim().min(1).nullable(),
   /** Encounters counted: lifetime total for the account when the response source is "log", else within the window. */
@@ -135,6 +144,8 @@ export const nettedAircraftSchema = z.object({
   closestApproachMi: z.number().finite().nonnegative(),
   /** Individual entries, newest first (at most MAX_VISITS_PER_AIRCRAFT). Older servers omit this; treated as empty. */
   visits: z.array(radiusVisitSchema).default([]),
+  /** Review-priority flags (`pattern-flags-v2`, src/domain/patterns.ts). Calculated behavior only, never intent. */
+  pattern: patternAssessmentSchema.nullish(),
 });
 export type NettedAircraft = z.infer<typeof nettedAircraftSchema>;
 

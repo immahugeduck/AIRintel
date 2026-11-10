@@ -50,7 +50,7 @@ Every `VITE_*` value is baked in at build time: change one → redeploy.
 
 ## 3. Migrations
 
-- [ ] `DATABASE_URL_UNPOOLED=<direct string> npm run db:migrate` (applies `db/migrations/0001-0005` and the repeatable role lockdown). Idempotent; re-run after every new migration. Migrations are **not** run by the Vercel build.
+- [ ] `DATABASE_URL_UNPOOLED=<direct string> npm run db:migrate` (applies `db/migrations/0001-0007` and the repeatable role lockdown). Idempotent; re-run after every new migration. Migrations are **not** run by the Vercel build.
 
 ## 4. Vercel project / build settings
 

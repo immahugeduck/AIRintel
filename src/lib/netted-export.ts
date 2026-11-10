@@ -9,12 +9,12 @@ const csvCell = (v: unknown): string => {
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 
-export const NETTED_CSV_COLUMNS = ["icao24", "callsign", "registration", "type", "visit_count", "first_seen_utc", "last_seen_utc", "closest_approach_mi", "latest_entry_utc", "latest_entry_last_in_radius_utc", "latest_entry_closest_mi", "latest_entry_observations"] as const;
+export const NETTED_CSV_COLUMNS = ["icao24", "callsign", "registration", "type", "visit_count", "first_seen_utc", "last_seen_utc", "closest_approach_mi", "latest_entry_utc", "latest_entry_last_in_radius_utc", "latest_entry_closest_mi", "latest_entry_observations", "latest_entry_center_lat", "latest_entry_center_lon", "pattern_tier", "pattern_score", "pattern_reasons"] as const;
 
 export function nettedToCsv(aircraft: NettedAircraft[]): string {
   const rows = aircraft.map((a) => {
     const v = a.visits[0];
-    return [a.icao24, a.callsign, a.registration, a.aircraftTypeCode, a.visitCount, a.firstSeenAt, a.lastSeenAt, a.closestApproachMi.toFixed(2), v?.enteredAt, v?.lastSeenInRadiusAt, v ? v.closestMi.toFixed(2) : null, v?.observationCount].map(csvCell).join(",");
+    return [a.icao24, a.callsign, a.registration, a.aircraftTypeCode, a.visitCount, a.firstSeenAt, a.lastSeenAt, a.closestApproachMi.toFixed(2), v?.enteredAt, v?.lastSeenInRadiusAt, v ? v.closestMi.toFixed(2) : null, v?.observationCount, v?.centerLatitude ?? null, v?.centerLongitude ?? null, a.pattern?.tier ?? null, a.pattern?.score ?? null, a.pattern ? a.pattern.reasons.filter((r) => r.weight !== 0).map((r) => `${r.code}(${r.weight > 0 ? "+" : ""}${r.weight})`).join("; ") : null].map(csvCell).join(",");
   });
   return [NETTED_CSV_COLUMNS.join(","), ...rows].join("\r\n") + "\r\n";
 }

@@ -3,7 +3,7 @@ import { aircraftResponseSchema, radiusQuerySchema, type RadiusQuery } from "../
 import { aircraftApiEndpoint, resolveApiUrl } from "../lib/api-url";
 import { getAccessToken } from "../lib/auth";
 
-export async function fetchAircraft(query: RadiusQuery, signal?: AbortSignal) {
+export async function fetchAircraft(query: RadiusQuery, signal?: AbortSignal, centerMode?: "follow" | "fixed") {
   const safe = radiusQuerySchema.parse(query);
   const url = resolveApiUrl(aircraftApiEndpoint());
   url.searchParams.set("lat", String(safe.latitude));
