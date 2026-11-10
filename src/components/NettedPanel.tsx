@@ -5,6 +5,7 @@ import type { NetStatus } from "../domain/net";
 import { registryAvailabilityNotice } from "../domain/profile";
 import { downloadText, nettedFilename, nettedToCsv, nettedToJson } from "../lib/netted-export";
 import type { NettedAircraft, NettedVisit } from "../domain/netted";
+import { PATTERN_TIER_LABEL, PATTERN_TIER_ORDER, type PatternAssessment } from "../domain/patterns";
 import { formatLastSeen } from "../domain/units";
 import { AccessDeniedError, AuthenticationRequiredError, ProviderNotConfiguredError } from "../providers/contracts";
 import { formatRadius } from "./AircraftList";
@@ -33,6 +34,42 @@ type Props = {
 };
 
 const VISIBLE_VISITS = 5;
+
+type PatternFilter = "all" | "flagged" | "hide-routine";
+const isFlagged = (item: NettedAircraft) => item.pattern?.tier === "priority" || item.pattern?.tier === "review";
+
+/** Review-priority badge. Wording describes recorded behavior only; it never asserts intent or surveillance. */
+export function PatternBadge({ pattern }: { pattern: PatternAssessment | null | undefined }) {
+  if (!pattern || pattern.tier === "low") return null;
+  const label = pattern.tier === "routine" ? `Routine${pattern.explainedBy ? ` · ${shortExplanation(pattern.explainedBy)}` : ""}` : PATTERN_TIER_LABEL[pattern.tier];
+  return <span className={`pattern-badge is-${pattern.tier}`} title={pattern.tier === "routine" ? pattern.explainedBy ?? undefined : `Score ${pattern.score}`}>{label}</span>;
+}
+
+const shortExplanation = (text: string) => (/training/i.test(text) ? "flight school" : /cargo/i.test(text) ? "cargo" : /fractional|charter/i.test(text) ? "charter jet" : /flight number/i.test(text) ? "airline" : /cruise/i.test(text) ? "transit" : /climb|descend/i.test(text) ? "arrival/departure" : "explained");
+
+/** "Why flagged": every reason with its evidence label (Observed / Calculated / Supported inference / Unknown). */
+export function PatternReasons({ pattern }: { pattern: PatternAssessment }) {
+  const [open, setOpen] = useState(false);
+  if (pattern.reasons.length === 0) return null;
+  return (
+    <div className="pattern-reasons">
+      <button type="button" className="disclosure" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Hide pattern details" : pattern.tier === "routine" ? "Why routine" : "Why flagged"} · score {pattern.score}</button>
+      {open && (
+        <>
+          <ul className="pattern-reason-list">
+            {pattern.reasons.map((reason) => (
+              <li key={reason.code} className={reason.weight > 0 ? "is-raise" : reason.weight < 0 ? "is-lower" : ""}>
+                <span className="mono pattern-weight">{reason.weight > 0 ? `+${reason.weight}` : reason.weight}</span>
+                <span>{reason.label} <small className="evidence-tag">{reason.evidence}</small></span>
+              </li>
+            ))}
+          </ul>
+          <p className="fine-print">Ranks recorded behavior for review ({pattern.version}). It does not establish who is aboard, why the aircraft flew there, or that anyone is being watched.</p>
+        </>
+      )}
+    </div>
+  );
+}
 
 /** Per-visit timeline: every time the aircraft entered the radius, newest first (Observed). */
 export function VisitTimeline({ item, timeZone, newSince, defaultOpen }: { item: NettedAircraft; timeZone?: string | undefined; newSince?: string | null | undefined; defaultOpen: boolean }) {
@@ -92,7 +129,13 @@ const reasonCopy: Record<Extract<NettedState, { kind: "session" }>["reason"], st
 /** Aircraft netted inside the watch radius with a visit counter and a short sourced description. */
 export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignIn, timeZone, profileLookup = true, variant = "tab", newSince = null, onOpenNetSettings }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
-  const aircraft = state.kind === "loading" ? [] : state.aircraft;
+  const [filter, setFilter] = useState<PatternFilter>("all");
+  const allAircraft = state.kind === "loading" ? [] : state.aircraft;
+  const hasPatterns = allAircraft.some((item) => item.pattern);
+  const flaggedCount = allAircraft.filter(isFlagged).length;
+  const aircraft = filter === "all" ? allAircraft
+    : [...allAircraft.filter((item) => (filter === "flagged" ? isFlagged(item) : item.pattern?.tier !== "routine"))]
+      .sort((a, b) => (PATTERN_TIER_ORDER[a.pattern?.tier ?? "low"] - PATTERN_TIER_ORDER[b.pattern?.tier ?? "low"]) || ((b.pattern?.score ?? 0) - (a.pattern?.score ?? 0)));
   const totalVisits = aircraft.reduce((sum, item) => sum + item.visitCount, 0);
 
   const net = state.kind === "ready" ? state.net ?? null : null;
@@ -131,8 +174,19 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
       )}
       {state.kind === "ready" && state.truncated && <p className="notice notice-warn">{lifetime ? "Showing your 500 most recently encountered aircraft." : "Only part of the recorded window could be scanned. Counts may be low; try a shorter period."}</p>}
 
+      {hasPatterns && (
+        <div className="pattern-filter" role="group" aria-label="Filter by review priority">
+          <span className="hint">{flaggedCount} flagged for review</span>
+          {([["all", "All"], ["flagged", "Flagged"], ["hide-routine", "Hide routine"]] as const).map(([value, label]) => (
+            <button key={value} type="button" className="chip-toggle" aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>
+          ))}
+        </div>
+      )}
+
       {state.kind === "loading" ? (
         <div className="empty-state" role="status"><span className="spinner" aria-hidden="true" /><p>Loading your Netted log…</p></div>
+      ) : aircraft.length === 0 && allAircraft.length > 0 ? (
+        <div className="empty-state" role="status"><p><strong>Nothing matches this filter.</strong></p><p className="muted">No aircraft currently meet the review thresholds.</p></div>
       ) : aircraft.length === 0 ? (
         <div className="empty-state" role="status">
           <span className="empty-icon" aria-hidden="true">◎</span>
@@ -149,6 +203,7 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
                 <div className="netted-top">
                   <button type="button" className="netted-main" aria-pressed={selected} onClick={() => onSelect(item.icao24)}>
                     <span className="netted-callsign mono">{item.callsign ?? <span className="unknown">Unknown</span>}</span>
+                    <PatternBadge pattern={item.pattern} />
                     <span className="netted-ident">{item.registration ?? "Registration unknown"} · {item.aircraftTypeCode ?? "Type unknown"}</span>
                   </button>
                   <span className="visit-counter" aria-label={`Entered the radius ${item.visitCount} ${item.visitCount === 1 ? "time" : "times"}${lifetime ? " in total" : ""}`}>
@@ -160,6 +215,7 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
                   <div><dt>Last seen</dt><dd>{formatLastSeen(item.lastSeenAt, timeZone)}</dd></div>
                   <div><dt>Closest</dt><dd className="mono">{item.closestApproachMi.toFixed(1)} mi</dd></div>
                 </dl>
+                {item.pattern && <PatternReasons pattern={item.pattern} />}
                 <VisitTimeline item={item} timeZone={timeZone} newSince={newSince} defaultOpen={drawer} />
                 <button type="button" className="disclosure" aria-expanded={open} aria-controls={`desc-${item.icao24}`} onClick={() => setExpanded(open ? null : item.icao24)}>
                   {open ? "Hide description" : "Aircraft description"}
