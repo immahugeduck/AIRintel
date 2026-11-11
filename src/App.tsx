@@ -285,7 +285,7 @@ export default function App() {
                 <button type="button" className="button button-ghost" onClick={() => setMapSettingsOpen(true)}>Open map settings</button>
               </section>
               <details className="panel evidence-details"><summary>Add supporting evidence</summary><EvidenceUploadPanel /></details>
-              <p className="fine-print about">Times are shown in your device's time zone; data is stored in UTC. Distances in statute miles, altitude in feet, speed in mph (converted from ground speed in knots). Live data: adsb.lol (ODbL).</p>
+              <p className="fine-print about">Times are shown in your device's time zone; data is stored in UTC. Distances in statute miles, altitude in feet, speed in mph (converted from ground speed in knots). Live data: adsb.lol (ODbL); when it is unreachable, <a href="https://adsb.fi" target="_blank" rel="noreferrer">adsb.fi</a> or airplanes.live (each aircraft shows its source).</p>
             </div>
           )}
           </ErrorBoundary>

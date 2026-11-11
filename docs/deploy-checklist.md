@@ -29,6 +29,7 @@ Set for **Preview** and **Production** (add **Development** if you use `vercel d
 | `VITE_PROFILE_API_URL` | no (public) | `/api/aircraft-profile` |
 | `VITE_AIRCRAFT_API_URL` | no (public) | `/api/aircraft-nearby` (optional on Vercel — SPA defaults to this path when empty) |
 | `ADSB_PROVIDER` | no | `adsb_lol` (default when unset) or `off` to disable live aircraft |
+| `ADSB_FALLBACK_PROVIDERS` | no | Fallback feeds tried in order when adsb.lol fails. Default `adsb_fi,airplanes_live`; `off` disables. See docs/provider-onboarding.md. |
 | `VITE_MAPBOX_ACCESS_TOKEN` | no (public `pk.` token) | Mapbox account → public default token. Without it the UI shows the Mapbox setup modal. |
 | `VITE_MAPBOX_STYLE` | no | `mapbox/streets-v12` |
 | `VITE_APP_NAME`, `VITE_DEFAULT_*`, `VITE_POLL_INTERVAL_SECONDS` | no | Optional; defaults exist in `.env.example`. |

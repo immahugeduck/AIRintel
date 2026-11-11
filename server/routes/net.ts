@@ -48,7 +48,7 @@ export function netRoutes(deps: NetRouteDeps) {
     if (!deps.db) return c.json({ error: "database_not_configured" }, 503, noStore);
     try {
       const summary = await runSweep({ db: deps.db, adsb: deps.adsb, net: deps.net, ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}), ...(deps.providerOptions ? { providerOptions: deps.providerOptions } : {}) });
-      log(summary.ok ? "info" : "error", "net_sweep", { status: summary.status, durationMs: summary.durationMs, queried: summary.areas.queried, covered: summary.areas.covered, deferred: summary.areas.deferred, fetched: summary.observations.fetched, inserted: summary.observations.inserted, rejected: summary.observations.rejected });
+      log(summary.ok ? "info" : "error", "net_sweep", { status: summary.status, durationMs: summary.durationMs, queried: summary.areas.queried, covered: summary.areas.covered, deferred: summary.areas.deferred, fetched: summary.observations.fetched, inserted: summary.observations.inserted, rejected: summary.observations.rejected, providers: summary.providers?.served.map((p) => `${p.provider}x${p.queries}`).join(",") || undefined });
       return c.json({ ...summary, build: buildId() }, summary.status === "failed" ? 502 : 200, noStore);
     } catch (error) {
       if (error instanceof SweepNotReadyError) return c.json({ error: "net_not_migrated" }, 503, noStore);

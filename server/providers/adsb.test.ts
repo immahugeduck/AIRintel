@@ -3,11 +3,11 @@ import { fetchLiveAircraft, normalizeAdsbLolAircraft, resolveAdsbConfig } from "
 
 describe("resolveAdsbConfig", () => {
   it("defaults to adsb.lol without an API key", () => {
-    expect(resolveAdsbConfig({})).toEqual({
+    expect(resolveAdsbConfig({})).toMatchObject({
       provider: "adsb_lol",
       baseUrl: "https://api.adsb.lol",
     });
-    expect(resolveAdsbConfig({ ADSB_PROVIDER: "adsb_lol" })).toEqual({
+    expect(resolveAdsbConfig({ ADSB_PROVIDER: "adsb_lol" })).toMatchObject({
       provider: "adsb_lol",
       baseUrl: "https://api.adsb.lol",
     });

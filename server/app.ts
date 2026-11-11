@@ -63,6 +63,8 @@ export function createApp(deps: AppDependencies) {
       database: deps.db !== null,
       auth: deps.verifier !== null,
       provider: deps.adsb !== null,
+      /** Live aircraft provider order (primary first, then fallbacks). */
+      providers: deps.adsb ? [deps.adsb.provider, ...(deps.adsb.fallbacks ?? []).map((f) => f.provider)] : [],
       sweep: { secretConfigured: Boolean(deps.cronSecret) },
       net: deps.db ? await healthNet(deps.db, NET_STALE_AFTER_MINUTES) : { state: "unknown", lastSweepAgeSeconds: null, lastStatus: null },
       config: errors.length === 0 ? "ok" : "degraded",

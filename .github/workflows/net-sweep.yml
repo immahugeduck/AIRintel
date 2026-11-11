@@ -50,17 +50,23 @@ jobs:
           errors="$(jq -r '[.errors[]? | "\(.code) x\(.count)"] | join(", ")' "$body" 2>/dev/null || true)"
           inserted="$(jq -r '.observations.inserted // 0' "$body" 2>/dev/null || echo 0)"
           encounters="$(jq -r '.encounters.started // 0' "$body" 2>/dev/null || echo 0)"
+          served="$(jq -r '[.providers.served[]? | "\(.provider) x\(.queries)"] | join(", ")' "$body" 2>/dev/null || true)"
+          provider_failures="$(jq -r '[.providers.failures[]? | "\(.provider)=\(.code)\(if .detail then "(\(.detail))" else "" end) x\(.count)"] | join(", ")' "$body" 2>/dev/null || true)"
           echo "### Net sweep: ${status} (HTTP ${code})" >> "$GITHUB_STEP_SUMMARY"
           echo "Observations recorded: ${inserted} · new encounters: ${encounters}${errors:+ · errors: ${errors}}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Providers: ${served:-none}${provider_failures:+ · failed: ${provider_failures}}" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$provider_failures" ] && [ -n "$served" ]; then
+            echo "::notice::Fallback aircraft provider used (${served}); failed: ${provider_failures}."
+          fi
           case "$code:$status" in
             200:completed|200:no_areas|200:skipped_locked|200:provider_not_configured)
               echo "::notice::Net sweep ${status}: ${inserted} observations recorded, ${encounters} new encounters." ;;
             200:partial)
               echo "::warning::Net sweep partial (${errors:-some areas deferred}): ${inserted} observations recorded." ;;
             502:failed)
-              # The aircraft provider (adsb.lol) did not answer. That is an outside outage, not a broken setup, so it is
-              # reported as a warning (visible on the run) without failing the job and sending failure emails.
-              echo "::warning::Net sweep recorded nothing: the aircraft provider did not answer (${errors:-provider error}). The next run will try again." ;;
+              # No aircraft provider (adsb.lol or its fallbacks) answered. That is an outside outage, not a broken setup, so
+              # it is reported as a warning (visible on the run) without failing the job and sending failure emails.
+              echo "::warning::Net sweep recorded nothing: no aircraft provider answered (${provider_failures:-${errors:-provider error}}). The next run will try again." ;;
             *)
               echo "::error::Net sweep endpoint answered HTTP ${code} (${status}). Check CRON_SECRET on GitHub and Vercel and /api/health."
               exit 1 ;;

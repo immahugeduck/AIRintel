@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { distanceNm } from "../src/domain/geometry.js";
 import { milesToNm } from "../src/domain/units.js";
 import type { NetConfig } from "./config.js";
@@ -8,7 +7,7 @@ import { acquireSweepLease, getSweepState, loadDueAreas, markAreasPolled, purgeO
 import { loadDueControlAreas, markControlAreasPolled, recordControlSightings, type ControlSweepArea } from "./control-areas.js";
 import { recordEncounters } from "./encounters.js";
 import { toRecorderObservations } from "./live-recording.js";
-import { fetchLiveAircraft, type AdsbProviderConfig, type LiveAircraftResult, type ProviderFetchOptions } from "./providers/adsb.js";
+import { classifyProviderError, fetchLiveAircraft, ProviderChainError, type AdsbProviderConfig, type LiveAircraftResult, type ProviderFailure, type ProviderFetchOptions } from "./providers/adsb.js";
 import { recordObservations, type RecordResult } from "./recorder.js";
 
 /**
@@ -24,6 +23,13 @@ export const MAX_FETCH_RADIUS_NM = 50;
  * provider a chance. Must fit (with the default 40 s budget) inside the Vercel function limit (vercel.json maxDuration 60).
  */
 export const PROVIDER_TIMEOUT_MS = 15_000;
+/**
+ * With fallbacks configured adsb.lol gets one 12 s attempt (no retry: a failing adsb.lol usually fails the same way
+ * twice, and undici gives up on an unanswered TCP connect after ~10 s), then each fallback 8 s. 12 + 8 + 8 s plus the
+ * 1 req/s spacing fits the default 40 s budget inside maxDuration 60.
+ */
+export const PRIMARY_WITH_FALLBACK_TIMEOUT_MS = 12_000;
+export const FALLBACK_TIMEOUT_MS = 8_000;
 /** The lease outlives the longest possible run (maxDuration 60 s), so an overlapping sweep can never start mid-run. */
 export const SWEEP_LEASE_SECONDS = 75;
 const RECORD_CHUNK = 20;
@@ -45,6 +51,8 @@ export type SweepSummary = {
   /** Control circles (migration 0007) swept, and the (aircraft, day) sighting rows they updated. */
   controls: { swept: number; sightings: number };
   errors: { code: string; count: number }[];
+  /** Which provider served each query and which failed (machine codes only). Present once a query was attempted. */
+  providers?: { served: { provider: string; queries: number }[]; failures: (ProviderFailure & { count: number })[] };
   retention?: { deleted: number };
 };
 
@@ -93,6 +101,12 @@ export function providerAttemptOptions(remainingMs: number): { timeoutMs: number
   return { timeoutMs: Math.max(2_000, Math.min(PROVIDER_TIMEOUT_MS, remainingMs)), retries: remainingMs >= PROVIDER_TIMEOUT_MS * 2 + 2_000 ? 1 : 0 };
 }
 
+/** Options for one query's provider chain, given the sweep budget left. */
+export function providerChainOptions(remainingMs: number, hasFallbacks: boolean): ProviderFetchOptions & { timeoutMs: number; retries: number; budgetMs: number } {
+  if (!hasFallbacks) return { ...providerAttemptOptions(remainingMs), budgetMs: remainingMs };
+  return { timeoutMs: Math.max(2_000, Math.min(PRIMARY_WITH_FALLBACK_TIMEOUT_MS, remainingMs)), retries: 0, fallbackTimeoutMs: FALLBACK_TIMEOUT_MS, budgetMs: remainingMs };
+}
+
 export type SweepDeps = {
   db: Queryable;
   adsb: AdsbProviderConfig | null;
@@ -108,14 +122,7 @@ export class SweepNotReadyError extends Error {
   constructor() { super("net_tables_missing"); this.name = "SweepNotReadyError"; }
 }
 
-function providerErrorCode(error: unknown): string {
-  if (error instanceof z.ZodError) return "provider_invalid_payload";
-  if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) return "provider_timeout";
-  const code = error && typeof error === "object" && "code" in error ? String((error as { code?: unknown }).code) : "";
-  if (code === "provider_adapter_not_implemented") return code;
-  if (/^adsb_lol_upstream_\d{3}$/.test(code)) return "provider_upstream_failed";
-  return "provider_network_error";
-}
+const providerErrorCode = (error: unknown): string => classifyProviderError(error);
 
 const isMissingTable = (error: unknown) => error && typeof error === "object" && (error as { code?: unknown }).code === "42P01";
 
@@ -133,7 +140,20 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
     controls: { swept: 0, sightings: 0 },
     errors: [],
   };
+  const served = new Map<string, number>();
+  const providerFailures = new Map<string, ProviderFailure & { count: number }>();
+  /** Providers that failed earlier in this sweep: later queries go straight to the next provider. */
+  const failedProviders = new Set<string>();
+  const noteFailures = (failures: readonly ProviderFailure[]) => {
+    for (const failure of failures) {
+      const key = `${failure.provider}|${failure.code}|${failure.detail ?? ""}`;
+      const entry = providerFailures.get(key);
+      if (entry) entry.count += 1; else providerFailures.set(key, { ...failure, count: 1 });
+      if (failure.code !== "provider_skipped" && failure.code !== "provider_budget_exhausted") failedProviders.add(failure.provider);
+    }
+  };
   const finish = (status: SweepStatus): SweepSummary => {
+    if (served.size > 0 || providerFailures.size > 0) summary.providers = { served: [...served].map(([provider, queries]) => ({ provider, queries })), failures: [...providerFailures.values()] };
     summary.status = status;
     summary.ok = status !== "failed";
     summary.durationMs = now() - started;
@@ -176,12 +196,14 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
       attempted += 1;
       summary.areas.queried += 1;
       const remaining = deps.net.budgetMs - elapsed;
-      const providerOptions: ProviderFetchOptions = { ...providerAttemptOptions(remaining), ...deps.providerOptions };
+      const providerOptions: ProviderFetchOptions = { ...providerChainOptions(remaining, (deps.adsb.fallbacks?.length ?? 0) > 0), skipProviders: failedProviders, ...deps.providerOptions };
       let result: LiveAircraftResult;
       try {
         result = await fetchLiveAircraft(deps.adsb, { lat: query.latitude, lon: query.longitude, radiusNm: query.radiusNm }, deps.fetchImpl ?? fetch, providerOptions);
       } catch (error) {
         const code = providerErrorCode(error);
+        if (error instanceof ProviderChainError) noteFailures(error.failures);
+        else noteFailures([{ provider: deps.adsb.provider, code }]);
         addError(code);
         failedQueries += 1;
         log("warn", "net_sweep_provider_failed", { code, ...errorFields(error) });
@@ -189,6 +211,12 @@ export async function runSweep(deps: SweepDeps): Promise<SweepSummary> {
         continue;
       }
       summary.observations.fetched += result.observations.length;
+      const servedBy = result.sources[0] ?? deps.adsb.provider;
+      served.set(servedBy, (served.get(servedBy) ?? 0) + 1);
+      if (result.providerFailures?.length) {
+        noteFailures(result.providerFailures);
+        log("warn", "net_sweep_provider_fallback", { served: servedBy, failed: result.providerFailures.map((f) => `${f.provider}=${f.code}${f.detail ? `(${f.detail})` : ""}`).join("; ") });
+      }
 
       const recorderInput = toRecorderObservations(result);
       const totals: RecordResult = { received: 0, inserted: 0, duplicate: 0, rejected: 0 };
