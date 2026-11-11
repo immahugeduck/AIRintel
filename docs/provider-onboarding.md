@@ -75,6 +75,33 @@ Status: **approved for the live `/aircraft-nearby` gateway** (public community f
 | Cache | No long-term redistribution of raw payloads beyond the flight-recorder tables AIRIntel already gates behind auth |
 | AIRIntel env | `ADSB_PROVIDER=adsb_lol` (default when unset). `ADSB_PROVIDER=off` disables. `ADSB_API_BASE_URL` optional override |
 
+### Fallback feeds (adsb.fi, airplanes.live)
+
+Status: **approved as automatic fallbacks** behind adsb.lol for `/aircraft-nearby` and the net sweep. Both return the
+same readsb `ac` rows as adsb.lol and go through the same normalizer (ICAO guard included). Every observation keeps the
+provider that actually served it (`provider`, response `sources`), and the recorder stores it under that provider's own
+`data_sources` row and schema version, so tracks from different feeds are never merged.
+
+| Field | adsb.fi | airplanes.live |
+| --- | --- | --- |
+| Docs | https://github.com/adsbfi/opendata | https://airplanes.live/api-guide |
+| Query | `GET https://opendata.adsb.fi/api/v3/lat/{lat}/lon/{lon}/dist/{nm}` (the v2 lat/lon form is deprecated) | `GET https://api.airplanes.live/v2/point/{lat}/{lon}/{nm}` |
+| Max radius | 250 NM | 250 NM |
+| Rate limit | 1 request/second (4xx responses count toward it) | 1 request/second |
+| Terms | Personal, non-commercial; cite adsb.fi with a link | Non-commercial; may answer 403 asking unknown clients to email them first |
+| `now` | epoch ms (v3); v2 sent seconds — both handled | epoch ms |
+| Schema version stored | `adsb_fi/v3` | `airplanes_live/v2` |
+| Normalization version | `airintel-readsb-normalize-2` | `airintel-readsb-normalize-2` |
+
+Order and waits: adsb.lol, then adsb.fi, then airplanes.live. Live view: adsb.lol 8 s (no retry when fallbacks exist),
+each fallback 6 s, 22 s total. Sweep: adsb.lol 12 s, each fallback 8 s, inside the sweep budget (default 40 s, function
+limit 60 s); a provider that failed once is skipped for the rest of that sweep. Requests to the 1 req/s feeds are
+spaced per instance. When every feed fails the error lists each one (e.g.
+`all_providers_failed adsb_lol=provider_network_error(UND_ERR_CONNECT_TIMEOUT); adsb_fi=...`) in the log line, and the
+sweep summary's `providers.failures`.
+
+`ADSB_FALLBACK_PROVIDERS` (optional): comma list in order, default `adsb_fi,airplanes_live`; `off` disables fallbacks.
+
 OpenSky and keyed commercial ADS-B products remain gated until their rows in this document are completed.
 
 

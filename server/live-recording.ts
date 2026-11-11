@@ -1,6 +1,6 @@
 import { bearerToken, hasScope, type RateLimiter, type TokenVerifier } from "./auth.js";
 import type { Queryable } from "./db.js";
-import { ADSB_LOL_NORMALIZATION_VERSION, ADSB_LOL_PROVIDER_SCHEMA_VERSION, type LiveAircraftResult } from "./providers/adsb.js";
+import { providerRecordingIdentity, type LiveAircraftResult } from "./providers/adsb.js";
 import { recordEncounters, type EncounterArea } from "./encounters.js";
 import { recordObservations, type RecordResult, type RecorderObservation } from "./recorder.js";
 
@@ -21,11 +21,13 @@ export const MAX_RECORDING_RADIUS_NM = 50;
 export function toRecorderObservations(result: LiveAircraftResult): RecorderObservation[] {
   return result.observations.flatMap((observation) => {
     const raw = observation.providerRecordId ? result.rawByRecordId?.get(observation.providerRecordId) : undefined;
-    if (raw === undefined || observation.provider !== "adsb_lol") return [];
+    // Only providers AIRIntel normalizes itself (adsb.lol and its readsb fallbacks) are recorded, each under its own identity.
+    const identity = providerRecordingIdentity(observation.provider);
+    if (raw === undefined || !identity) return [];
     return [{
       provider: observation.provider,
-      providerSchemaVersion: ADSB_LOL_PROVIDER_SCHEMA_VERSION,
-      normalizationVersion: ADSB_LOL_NORMALIZATION_VERSION,
+      providerSchemaVersion: identity.providerSchemaVersion,
+      normalizationVersion: identity.normalizationVersion,
       ...(observation.providerRecordId ? { providerRecordId: observation.providerRecordId } : {}),
       icao24: observation.icao24,
       registration: observation.registration,

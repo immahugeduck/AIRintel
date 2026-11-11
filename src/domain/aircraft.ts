@@ -57,6 +57,8 @@ export const aircraftResponseSchema = z.object({
   observations: z.array(observationSchema),
   receivedAt: z.iso.datetime({ offset: true }),
   sources: z.array(z.string().min(1)),
+  /** Providers tried before the one in `sources` (present only when a fallback served). */
+  providerFailures: z.array(z.object({ provider: z.string().min(1), code: z.string().min(1), detail: z.string().optional() })).optional(),
   recording: liveRecordingStatusSchema.optional(),
 });
 

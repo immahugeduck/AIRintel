@@ -34,7 +34,16 @@ export function scrub(text: string): string {
 export function errorFields(error: unknown): Fields {
   if (error instanceof Error) {
     const code = (error as { code?: unknown }).code;
-    return { errorName: error.name, ...(typeof code === "string" || typeof code === "number" ? { errorCode: String(code) } : {}), errorMessage: scrub(error.message) };
+    // undici reports every transport failure as TypeError("fetch failed"); the real reason (connect timeout, DNS,
+    // reset) is only on `cause.code`. Machine codes only, never the cause message (it can contain addresses).
+    const cause = (error as { cause?: unknown }).cause;
+    const causeCode = cause && typeof cause === "object" ? (cause as { code?: unknown }).code : undefined;
+    return {
+      errorName: error.name,
+      ...(typeof code === "string" || typeof code === "number" ? { errorCode: String(code) } : {}),
+      errorMessage: scrub(error.message),
+      ...(typeof causeCode === "string" && /^[A-Z0-9_]{2,40}$/.test(causeCode) ? { errorCause: causeCode } : {}),
+    };
   }
   return { errorName: typeof error };
 }

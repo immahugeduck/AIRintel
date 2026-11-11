@@ -4,7 +4,7 @@ import type { TokenVerifier } from "./auth.js";
 import { readConfig, type NetConfig } from "./config.js";
 import type { Queryable } from "./db.js";
 import { setLogSink } from "./logger.js";
-import { PROVIDER_TIMEOUT_MS, SWEEP_LEASE_SECONDS, planSweep, providerAttemptOptions, runSweep, fetchRadiusNm } from "./net-sweep.js";
+import { PROVIDER_TIMEOUT_MS, SWEEP_LEASE_SECONDS, planSweep, providerAttemptOptions, providerChainOptions, runSweep, fetchRadiusNm } from "./net-sweep.js";
 import { recordObservations } from "./recorder.js";
 import { secretsMatch } from "./routes/net.js";
 import { distanceNm } from "../src/domain/geometry.js";
@@ -490,5 +490,74 @@ describe("GET /history?action=netted visits list and net freshness", () => {
     const response = await sweepApp({ db }).request("/history?action=netted&lat=40&lon=-86", { headers: authed });
     expect(response.status).toBe(200);
     expect((await response.json() as { net: unknown }).net).toBeNull();
+  });
+});
+
+describe("runSweep provider fallback", () => {
+  const chained = { provider: "adsb_lol", baseUrl: "https://lol.test", fallbacks: [{ provider: "adsb_fi" as const, baseUrl: "https://fi.test/api" }, { provider: "airplanes_live" as const, baseUrl: "https://live.test" }] };
+  const connectTimeout = () => Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("Connect Timeout Error"), { code: "UND_ERR_CONNECT_TIMEOUT" }) });
+  const routed = (routes: Record<string, () => Response | Error>) => vi.fn(async (input: string | URL) => {
+    const out = routes[new URL(String(input)).host]?.();
+    if (!out) throw new Error("unexpected host");
+    if (out instanceof Error) throw out;
+    return out;
+  });
+  const hostsOf = (fetchImpl: ReturnType<typeof routed>) => fetchImpl.mock.calls.map((call) => new URL(String(call[0])).host);
+  const sweep = (stub: ReturnType<typeof stubDb>, fetchImpl: typeof fetch, extra: Partial<Parameters<typeof runSweep>[0]> = {}) => runSweep({ db: stub.db, adsb: chained, net: NET, fetchImpl, providerOptions: noSleep, ...extra });
+
+  it("records adsb.fi rows under adsb.fi's own identity when adsb.lol is unreachable, and still logs encounters with their center tag", async () => {
+    const stub = stubDb({ areas: [area(userA, 40, -86)] });
+    const encounters: unknown[][] = [];
+    const tags: unknown[] = [];
+    const db: Queryable = { query: async (text: string, params?: readonly unknown[]) => {
+      if (text.includes("set center_mode")) { tags.push(params?.[1]); return { rows: [] } as never; }
+      if (text.includes("insert into airintel_private.user_aircraft_tallies")) return { rows: [{ icao24: params?.[1] }] } as never;
+      if (text.includes("insert into airintel_private.encounters")) { encounters.push([...(params ?? [])]); return { rows: [{ id: `enc-${encounters.length}` }] } as never; }
+      return stub.db.query(text, params);
+    } };
+    const fetchImpl = routed({ "lol.test": connectTimeout, "fi.test": () => new Response(JSON.stringify(providerPayload([aircraftRow("abc123", 40.01, -86.01)]))) });
+    const summary = await sweep(stub, fetchImpl as never, { db });
+    expect(summary).toMatchObject({ ok: true, status: "completed", observations: { fetched: 1, inserted: 1 }, errors: [], encounters: { started: 1 } });
+    expect(summary.providers).toEqual({ served: [{ provider: "adsb_fi", queries: 1 }], failures: [{ provider: "adsb_lol", code: "provider_network_error", detail: "UND_ERR_CONNECT_TIMEOUT", count: 1 }] });
+    const recorded = stub.calls.filter((call) => call.text.includes("record_aircraft_observation")).map((call) => JSON.parse(String(call.params?.[0])));
+    expect(recorded[0]).toMatchObject({ provider: "adsb_fi", providerSchemaVersion: "adsb_fi/v3", normalizationVersion: "airintel-readsb-normalize-2", icao24: "abc123", raw: { hex: "abc123" } });
+    expect(stub.state.polled).toEqual([{ ids: [userA], status: "ok", success: true }]);
+    // The encounter still carries the follow/fixed tag, so /health's writer check stays "current".
+    expect(encounters).toHaveLength(1);
+    expect(tags).toEqual(["fixed"]);
+  });
+
+  it("does not wait on adsb.lol again for later queries in the same sweep once it failed", async () => {
+    const stub = stubDb({ areas: [area(userA, 40, -86), area(userB, 10, 10)] });
+    const fetchImpl = routed({ "lol.test": connectTimeout, "fi.test": () => new Response(JSON.stringify(providerPayload([]))) });
+    const summary = await sweep(stub, fetchImpl as never);
+    expect(hostsOf(fetchImpl)).toEqual(["lol.test", "fi.test", "fi.test"]);
+    expect(summary.providers?.served).toEqual([{ provider: "adsb_fi", queries: 2 }]);
+    expect(summary.providers?.failures).toEqual([
+      { provider: "adsb_lol", code: "provider_network_error", detail: "UND_ERR_CONNECT_TIMEOUT", count: 1 },
+      { provider: "adsb_lol", code: "provider_skipped", detail: "failed_earlier_in_run", count: 1 },
+    ]);
+  });
+
+  it("when every provider fails: still failed / provider_network_error (workflow warning), and the log lists each provider", async () => {
+    const lines: string[] = [];
+    const restore = setLogSink((line) => lines.push(line));
+    try {
+      const stub = stubDb({ areas: [area(userA, 40, -86)] });
+      const fetchImpl = routed({ "lol.test": connectTimeout, "fi.test": () => new Response("x", { status: 429 }), "live.test": () => new Response("{\"error\":\"contact\"}", { status: 403 }) });
+      const summary = await sweep(stub, fetchImpl as never);
+      expect(summary).toMatchObject({ ok: false, status: "failed", errors: [{ code: "provider_network_error", count: 1 }] });
+      expect(summary.providers?.failures.map((f) => `${f.provider}=${f.code}:${f.detail ?? ""}`)).toEqual(["adsb_lol=provider_network_error:UND_ERR_CONNECT_TIMEOUT", "adsb_fi=provider_upstream_failed:429", "airplanes_live=provider_upstream_failed:403"]);
+      expect(stub.state.polled).toEqual([{ ids: [userA], status: "provider_error", success: false }]);
+      const failed = lines.map((line) => JSON.parse(line) as Record<string, unknown>).find((entry) => entry.event === "net_sweep_provider_failed");
+      expect(failed).toMatchObject({ code: "provider_network_error", errorMessage: "all_providers_failed adsb_lol=provider_network_error(UND_ERR_CONNECT_TIMEOUT); adsb_fi=provider_upstream_failed(429); airplanes_live=provider_upstream_failed(403)" });
+    } finally { restore(); }
+  });
+
+  it("fits the whole provider chain inside the sweep budget", () => {
+    expect(providerChainOptions(40_000, true)).toEqual({ timeoutMs: 12_000, retries: 0, fallbackTimeoutMs: 8_000, budgetMs: 40_000 });
+    expect(providerChainOptions(9_000, true)).toEqual({ timeoutMs: 9_000, retries: 0, fallbackTimeoutMs: 8_000, budgetMs: 9_000 });
+    // Without fallbacks the previous single-provider policy (15 s, one retry when it fits) is unchanged.
+    expect(providerChainOptions(40_000, false)).toEqual({ timeoutMs: 15_000, retries: 1, budgetMs: 40_000 });
   });
 });
