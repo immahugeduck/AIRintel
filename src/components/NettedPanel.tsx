@@ -122,7 +122,7 @@ export function describeStay(visit: NettedVisit): string {
 
 const reasonCopy: Record<Extract<NettedState, { kind: "session" }>["reason"], string> = {
   "signed-out": "Sign in to keep a saved Netted log. Until then, only aircraft seen during this visit are counted, and they are not saved.",
-  "no-access": "Your account does not have the history access grant yet, so the saved Netted log is unavailable. The owner can grant it with npm run access:grant -- --email <you> --scope history. Showing this visit only.",
+  "no-access": "Access for this account has been turned off, so the saved Netted log is unavailable. Showing this visit only.",
   unconfigured: "Recorded history is not configured for this deployment (database or sign-in missing). Showing this visit only; nothing is saved.",
   error: "The saved Netted log could not be loaded. Showing this visit only.",
 };

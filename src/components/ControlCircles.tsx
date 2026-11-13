@@ -4,6 +4,8 @@ import { deleteControlArea, fetchControlAreas, saveControlArea } from "../api/ne
 import { MAX_CONTROL_AREAS, MIN_CONTROL_SEPARATION_MI, formatAgo, type ControlArea, type ControlAreaInput } from "../domain/net";
 import { MAX_WATCH_RADIUS_MI, MIN_WATCH_RADIUS_MI, WATCH_RADIUS_MI } from "../domain/units";
 import { describeNetError } from "../lib/use-net";
+import type { GeocodeResult } from "../domain/geocode";
+import { AddressSearch } from "./AddressSearch";
 
 type Props = { signedIn: boolean; onSignIn: () => void };
 
@@ -79,31 +81,33 @@ function ControlRow({ area, busy, onRemove }: { area: ControlArea; busy: boolean
 function AddControlForm({ slot, saving, onSave }: { slot: number; saving: boolean; onSave: (input: ControlAreaInput) => void }) {
   const ids = useId();
   const [label, setLabel] = useState("");
-  const [lat, setLat] = useState("");
-  const [lon, setLon] = useState("");
+  const [place, setPlace] = useState<GeocodeResult | null>(null);
   const [radius, setRadius] = useState(String(WATCH_RADIUS_MI));
   const [formError, setFormError] = useState<string | null>(null);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const latitude = Number(lat);
-    const longitude = Number(lon);
     const radiusMi = Number(radius);
-    if (!lat.trim() || !Number.isFinite(latitude) || latitude < -90 || latitude > 90) { setFormError("Latitude must be between -90 and 90."); return; }
-    if (!lon.trim() || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) { setFormError("Longitude must be between -180 and 180."); return; }
+    if (!place) { setFormError("Find the control circle's address or place first."); return; }
     if (!Number.isFinite(radiusMi) || radiusMi < MIN_WATCH_RADIUS_MI || radiusMi > MAX_WATCH_RADIUS_MI) { setFormError(`Radius must be ${MIN_WATCH_RADIUS_MI}–${MAX_WATCH_RADIUS_MI} mi.`); return; }
     setFormError(null);
-    onSave({ slot, label: label.trim(), latitude, longitude, radiusMi, enabled: true });
+    onSave({ slot, label: label.trim(), latitude: place.latitude, longitude: place.longitude, radiusMi, enabled: true });
   };
   return (
     <details className="manual-location">
       <summary>Add control circle {slot}</summary>
+      {place ? (
+        <p className="notice" role="status">
+          Center: <strong>{place.label}</strong> <span className="fine-print mono">({round(place.latitude)}, {round(place.longitude)})</span>{" "}
+          <button type="button" className="link-button" onClick={() => setPlace(null)}>Change</button>
+        </p>
+      ) : (
+        <AddressSearch onPick={(picked) => { setPlace(picked); setFormError(null); }} confirmLabel="Use as circle center" label="Center address or place" />
+      )}
       <form onSubmit={submit} className="manual-grid" noValidate>
         <div className="field manual-span"><label htmlFor={`${ids}-label`}>Name (optional)</label><input id={`${ids}-label`} maxLength={40} value={label} onChange={(e) => setLabel(e.currentTarget.value)} placeholder="e.g. Across town" /></div>
-        <div className="field"><label htmlFor={`${ids}-lat`}>Latitude</label><input id={`${ids}-lat`} type="number" step="any" min={-90} max={90} value={lat} onChange={(e) => setLat(e.currentTarget.value)} /></div>
-        <div className="field"><label htmlFor={`${ids}-lon`}>Longitude</label><input id={`${ids}-lon`} type="number" step="any" min={-180} max={180} value={lon} onChange={(e) => setLon(e.currentTarget.value)} /></div>
         <div className="field"><label htmlFor={`${ids}-radius`}>Radius (mi)</label><input id={`${ids}-radius`} type="number" step={1} min={MIN_WATCH_RADIUS_MI} max={MAX_WATCH_RADIUS_MI} value={radius} onChange={(e) => setRadius(e.currentTarget.value)} /></div>
         {formError && <p className="notice notice-error manual-span" role="alert">{formError}</p>}
-        <button type="submit" className="button button-ghost manual-span" disabled={saving}>{saving ? "Saving…" : "Save control circle"}</button>
+        <button type="submit" className="button button-ghost manual-span" disabled={saving || !place}>{saving ? "Saving…" : "Save control circle"}</button>
       </form>
     </details>
   );

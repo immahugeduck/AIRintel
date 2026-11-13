@@ -22,7 +22,7 @@ export class AuthenticationRequiredError extends Error {
 /** The user is signed in but lacks the access grant (e.g. `history`) required by the route. */
 export class AccessDeniedError extends Error {
   constructor(readonly scope: "history" | "profile") {
-    super(scope === "history" ? "Your account does not have the history access grant yet." : "Your account does not have the profile access grant yet.");
+    super(scope === "history" ? "Recorded-history access is turned off for this account." : "Aircraft-profile access is turned off for this account.");
     this.name = "AccessDeniedError";
   }
 }

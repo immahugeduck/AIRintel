@@ -3,6 +3,7 @@ import { get, put } from "@vercel/blob";
 import { Hono } from "hono";
 import type { AppVariables } from "../http.js";
 
+const EVIDENCE_PREFIX = "airintel/evidence/";
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const allowedContentTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 
@@ -55,7 +56,8 @@ export function evidenceRoutes() {
 
     const access = blobAccess();
     try {
-      const blob = await put(`airintel/evidence/${filename}`, body, {
+      // Each account's uploads live under its own folder; /view only serves the caller's folder.
+      const blob = await put(`${EVIDENCE_PREFIX}${c.get("user").id}/${filename}`, body, {
         access,
         addRandomSuffix: true,
         contentType,
@@ -76,9 +78,13 @@ export function evidenceRoutes() {
 
   app.get("/view", async (c) => {
     const pathname = c.req.query("pathname")?.trim();
-    if (!pathname || !pathname.startsWith("airintel/evidence/")) {
+    if (!pathname || !pathname.startsWith(EVIDENCE_PREFIX) || pathname.includes("..")) {
       return c.json({ error: "invalid_pathname" }, 400);
     }
+    const rest = pathname.slice(EVIDENCE_PREFIX.length);
+    // A path inside a folder belongs to that account. Flat paths predate per-account folders (single-owner era) and
+    // carry an unguessable random suffix, so they stay readable to keep earlier uploads working.
+    if (rest.includes("/") && !rest.startsWith(`${c.get("user").id}/`)) return c.json({ error: "blob_not_found" }, 404);
 
     try {
       const result = await get(pathname, { access: blobAccess() });

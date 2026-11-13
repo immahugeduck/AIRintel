@@ -31,10 +31,26 @@ export function bearerToken(header: string | null | undefined): string | null {
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** True when the user holds the scope in airintel_private.access_grants (managed with `npm run access:grant`). */
+/** Scopes every signed-up account receives automatically on its first authenticated request. */
+export const DEFAULT_ACCESS_SCOPES: readonly AccessScope[] = ["history", "profile"];
+
+/**
+ * True when the user holds the scope in airintel_private.access_grants. A verified account with no row yet is
+ * provisioned with DEFAULT_ACCESS_SCOPES in the same statement, so any account that signs up gets the full app.
+ * `npm run access:revoke` leaves an explicit empty-scopes row, which this never overwrites, so a revoke sticks.
+ */
 export async function hasScope(db: Queryable, userId: string, scope: AccessScope): Promise<boolean> {
   if (!uuidPattern.test(userId)) return false;
-  const { rows } = await db.query<{ allowed: boolean }>("select $2 = any(scopes) as allowed from airintel_private.access_grants where user_id = $1::uuid", [userId, scope]);
+  const { rows } = await db.query<{ allowed: boolean }>(
+    `with provisioned as (
+       insert into airintel_private.access_grants (user_id, scopes, note)
+       values ($1::uuid, $3::text[], 'auto: signed-up account')
+       on conflict (user_id) do nothing
+       returning scopes
+     )
+     select $2 = any(coalesce((select scopes from provisioned), (select scopes from airintel_private.access_grants where user_id = $1::uuid))) as allowed`,
+    [userId, scope, [...DEFAULT_ACCESS_SCOPES]],
+  );
   return rows[0]?.allowed === true;
 }
 
