@@ -85,6 +85,8 @@ describe.skipIf(!databaseUrl || !authUrl)("Neon Postgres + Neon Auth (integratio
     grantedToken = await jwtFor(emails.granted);
     plainToken = await jwtFor(emails.plain);
     node("scripts/access.mjs", "grant", "--email", emails.granted, "--scope", "history,profile");
+    // New accounts are auto-granted; an explicit revoke must keep this one out.
+    node("scripts/access.mjs", "revoke", "--email", emails.plain);
   }, 60_000);
 
   afterAll(async () => {
@@ -98,7 +100,7 @@ describe.skipIf(!databaseUrl || !authUrl)("Neon Postgres + Neon Auth (integratio
     await pool?.end();
   });
 
-  it("rejects missing and unprivileged callers, accepts a real Neon Auth JWT with a grant", async () => {
+  it("rejects missing and revoked callers, accepts a real Neon Auth JWT with a grant", async () => {
     expect((await call("/history?action=search&q=fffe")).status).toBe(401);
     expect((await call("/history?action=search&q=fffe", "not.a.jwt")).status).toBe(401);
     const denied = await call("/history?action=search&q=fffe", plainToken);

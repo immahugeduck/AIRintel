@@ -11,6 +11,7 @@ import type { AppVariables } from "../http.js";
 import { getWatchAreaRow, toNetStatus, upsertWatchArea, watchAreaResponse } from "../net-watch.js";
 import { assessLogPatterns, assessWindowPatterns, loadProviderFlags, type PatternRunStatus, type ProviderFlags } from "../patterns.js";
 import { lookupRegistryIdentities } from "../registry.js";
+import { geocode } from "../geocode.js";
 
 const searchSchema = z.string().trim().min(2).max(24).regex(/^[a-zA-Z0-9-]+$/);
 const icaoSchema = z.string().trim().toLowerCase().regex(/^[0-9a-f]{6}$/);
@@ -41,11 +42,21 @@ export function historyRoutes(db: Queryable) {
       if (action === "netted") return await netted();
       if (action === "watch-area") return await getWatchArea();
       if (action === "control-areas") return c.json(await listControlAreas(db, c.get("user").id));
+      if (action === "geocode") return await lookupAddress(c.req.query("q"));
       return c.json({ error: "invalid_action" }, 400);
     } catch (error) {
       log("error", "history_query_failed", { action: action ?? null, ...errorFields(error) });
       const missing = (action === "watch-area" || action === "control-areas") && error && typeof error === "object" && (error as { code?: unknown }).code === "42P01";
       return c.json({ error: missing ? "net_not_migrated" : "history_query_failed" }, missing ? 503 : 500);
+    }
+
+    /** Address / place name / "lat, lon" -> one coordinate match for the location forms. */
+    async function lookupAddress(raw: string | undefined) {
+      const outcome = await geocode(raw);
+      if (outcome.status === "found") return c.json({ result: outcome.result }, 200, { "Cache-Control": "no-store" });
+      if (outcome.status === "invalid") return c.json({ error: "invalid_address" }, 400);
+      if (outcome.status === "not_found") return c.json({ error: "address_not_found" }, 404);
+      return c.json({ error: "geocoder_unavailable" }, 502);
     }
 
     /** The caller's server-side watch area (the always-on net) and its freshness. Never exposes other users' areas. */

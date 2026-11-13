@@ -88,7 +88,7 @@ export function AuthForm({ onDone, autoFocus = false }: { onDone?: () => void; a
         {busy && <span className="spinner" aria-hidden="true" />}
         {busy ? (mode === "sign-up" ? "Creating account…" : "Signing in…") : mode === "sign-up" ? "Create account" : "Sign in"}
       </button>
-      {mode === "sign-up" && <p className="fine-print">After creating an account, the owner grants recorded-history access with <code>npm run access:grant</code>.</p>}
+      {mode === "sign-up" && <p className="fine-print">New accounts get every feature as soon as they sign in.</p>}
     </form>
   );
 }

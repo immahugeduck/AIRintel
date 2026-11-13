@@ -1,4 +1,6 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useId, useState } from "react";
+import type { GeocodeResult } from "../domain/geocode";
+import { AddressSearch } from "./AddressSearch";
 import { MAX_WATCH_RADIUS_MI, MIN_WATCH_RADIUS_MI } from "../domain/units";
 import type { FollowState } from "../lib/use-follow-me";
 import { FOLLOW_RECENTER_MI, clampRadiusMi, geolocationErrorMessage, type WatchArea } from "../lib/watch-area";
@@ -17,11 +19,6 @@ export function LocationPanel({ area, onChange, follow = { kind: "off" } }: Prop
   const ids = useId();
   const [locating, setLocating] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
-  const [lat, setLat] = useState(String(round(area.latitude)));
-  const [lon, setLon] = useState(String(round(area.longitude)));
-  const [manualError, setManualError] = useState<string | null>(null);
-
-  useEffect(() => { setLat(String(round(area.latitude))); setLon(String(round(area.longitude))); }, [area.latitude, area.longitude]);
 
   const locate = () => {
     if (!("geolocation" in navigator)) { setGeoError(geolocationErrorMessage(null)); return; }
@@ -37,16 +34,9 @@ export function LocationPanel({ area, onChange, follow = { kind: "off" } }: Prop
     );
   };
 
-  const saveManual = (event: FormEvent) => {
-    event.preventDefault();
-    const latitude = Number(lat);
-    const longitude = Number(lon);
-    if (!lat.trim() || !Number.isFinite(latitude) || latitude < -90 || latitude > 90) { setManualError("Latitude must be between -90 and 90."); return; }
-    if (!lon.trim() || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) { setManualError("Longitude must be between -180 and 180."); return; }
-    setManualError(null);
-    // A manually entered center is a fixed place: it turns follow me off so the next fix does not move it away.
-    onChange({ ...area, latitude, longitude, source: "saved", followMe: false, updatedAt: new Date().toISOString() });
-  };
+  // A manually chosen center is a fixed place: it turns follow me off so the next fix does not move it away.
+  const saveManual = (place: GeocodeResult) =>
+    onChange({ ...area, latitude: place.latitude, longitude: place.longitude, source: "saved", followMe: false, updatedAt: new Date().toISOString() });
 
   const setFollow = (followMe: boolean) => onChange({ ...area, followMe, updatedAt: new Date().toISOString() });
 
@@ -93,12 +83,7 @@ export function LocationPanel({ area, onChange, follow = { kind: "off" } }: Prop
 
       <details className="manual-location">
         <summary>Enter a location manually</summary>
-        <form onSubmit={saveManual} className="manual-grid" noValidate>
-          <div className="field"><label htmlFor={`${ids}-lat`}>Latitude</label><input id={`${ids}-lat`} type="number" step="any" min={-90} max={90} value={lat} onChange={(event) => setLat(event.currentTarget.value)} /></div>
-          <div className="field"><label htmlFor={`${ids}-lon`}>Longitude</label><input id={`${ids}-lon`} type="number" step="any" min={-180} max={180} value={lon} onChange={(event) => setLon(event.currentTarget.value)} /></div>
-          {manualError && <p className="notice notice-error manual-span" role="alert">{manualError}</p>}
-          <button type="submit" className="button button-ghost manual-span">Save location</button>
-        </form>
+        <AddressSearch onPick={saveManual} confirmLabel="Use this location" />
       </details>
     </section>
   );

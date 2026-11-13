@@ -16,7 +16,7 @@ const sameArea = (a: AreaLike, b: AreaLike) =>
   Math.abs(a.latitude - b.latitude) < 1e-5 && Math.abs(a.longitude - b.longitude) < 1e-5 && Math.abs(a.radiusMi - b.radiusMi) < 1e-9 && (a.followMe === true) === (b.followMe === true);
 
 export function describeNetError(error: unknown): NetControlState & { kind: "unavailable" } {
-  if (error instanceof AccessDeniedError) return { kind: "unavailable", reason: "no-access", message: "Your account needs the history access grant before the net can run while the app is closed." };
+  if (error instanceof AccessDeniedError) return { kind: "unavailable", reason: "no-access", message: "Access for this account has been turned off, so the net cannot run while the app is closed." };
   if (error instanceof ProviderNotConfiguredError) return { kind: "unavailable", reason: "unconfigured", message: "Sign-in or the database is not configured for this deployment, so the always-on net is unavailable." };
   if (error instanceof NetNotMigratedError) return { kind: "unavailable", reason: "not-migrated", message: error.message };
   return { kind: "unavailable", reason: "error", message: error instanceof Error ? error.message : "The net status could not be loaded." };

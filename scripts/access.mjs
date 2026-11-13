@@ -2,6 +2,8 @@
 //   npm run access:grant -- --email you@example.com --scope history --scope profile
 //   npm run access:revoke -- --email you@example.com
 //   npm run access:list
+// Every account that signs up is granted history + profile automatically on its first API call (server/auth.ts).
+// Revoke keeps an empty-scopes row so the automatic grant does not give access back.
 // The user must have signed up through Neon Auth first (a row in neon_auth."user").
 import { connect } from "./lib/db.mjs";
 
@@ -34,8 +36,12 @@ try {
       );
       console.log(`Granted ${scopes.join(", ")} to ${email}`);
     } else {
-      const result = await client.query("delete from airintel_private.access_grants where user_id = $1", [user.id]);
-      console.log(result.rowCount ? `Revoked access for ${email}` : `${email} had no grants`);
+      await client.query(
+        `insert into airintel_private.access_grants (user_id, scopes, note) values ($1, '{}', 'revoked')
+         on conflict (user_id) do update set scopes = '{}', note = 'revoked', updated_at = now()`,
+        [user.id],
+      );
+      console.log(`Revoked access for ${email}`);
     }
   }
 } finally {
