@@ -111,8 +111,12 @@ export function describeNetStatus(status: NetStatus, now: Date = new Date()): { 
  * in each (per UTC day) so an aircraft's presence near the user can be compared with its presence at the controls.
  */
 export const MAX_CONTROL_AREAS = 2;
-/** A control circle's center must be at least this far from the user's watch center. */
-export const MIN_CONTROL_SEPARATION_MI = 10;
+/**
+ * Floor on control-center distance from a watch center. Lowered from 10 to 3 mi (2026-11-14) so controls fit for users
+ * whose regular places are close together; the no-overlap rule (control radius + place radius + edge margin) still
+ * applies and is usually the binding one.
+ */
+export const MIN_CONTROL_SEPARATION_MI = 3;
 /** Comparison window for control counts. */
 export const CONTROL_WINDOW_DAYS = 7;
 

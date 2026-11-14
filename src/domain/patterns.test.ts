@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assessPattern, circlingEvidence, countSeparateCenters, dipEvidence, headingDelta, localDay, longestDayStreak, phoneSightings, routineExplanation, sameDayRepeatDays, timeCorrelatedPlaces, type PatternInput, type PatternPosition, type PatternVisit } from "./patterns";
+import { assessPattern, circlingEvidence, countSeparateCenters, dipContext, dipEvidence, headingDelta, localDay, longestDayStreak, phoneSightings, routineExplanation, sameDayRepeatDays, timeCorrelatedPlaces, type PatternInput, type PatternPosition, type PatternVisit } from "./patterns";
 
 // TEST FIXTURES ONLY: hand-written synthetic geometry used to exercise the pattern rules.
 // They are not provider data and are never shipped in the application bundle.
@@ -390,5 +390,61 @@ describe("v5: streaks and same-day repeats with the radius on your phone", () =>
     const result = assessPattern(base({ callsign: "SWA461", visits: [straightPass(1, 3, 30, { altitudeFt: 36_000, groundSpeedKt: 450 })], sightings: [1, 2, 3, 4, 5, 6, 7].map((d) => follow(d)) }));
     expect(result.reasons.some((r) => r.code === "consecutive_days" || r.code === "same_day_repeat")).toBe(false);
     expect(result.tier).toBe("routine");
+  });
+});
+
+describe("touch-and-go and near-field dips", () => {
+  const r2 = { latitude: 39.7467, longitude: -86.4753 }; // 2R2, field elevation 898 ft
+  // Straight pass due north through `c`; inside 2 mi the aircraft drops to `lowFt` and slows, then climbs back out.
+  const passOver = (day: number, c: { latitude: number; longitude: number }, lowFt: number, highFt = 2_000): PatternVisit => {
+    const positions: PatternPosition[] = [];
+    for (let i = 0; i <= 24; i += 1) {
+      const nm = -4 + (8 * i) / 24;
+      const d = Math.abs(nm);
+      // Bottoms out within 0.8 NM of `c`, halfway down elsewhere inside the 2 mi zone.
+      const altitudeFt = d <= 0.8 ? lowFt : d <= 1.74 ? (lowFt + highFt) / 2 : highFt;
+      positions.push({ observedAt: new Date(Date.parse(t(day, 0)) + i * 30_000).toISOString(), latitude: c.latitude + nm / NM_PER_DEG_LAT, longitude: c.longitude, altitudeFt, groundSpeedKt: d <= 1.74 ? 70 : 105, trackDeg: 0, verticalRateFpm: 0 });
+    }
+    return { enteredAt: t(day, 0), lastSeenInRadiusAt: t(day, 12), center: c, positions };
+  };
+
+  it("reads a low point reported on the ground as a touch-and-go anywhere", () => {
+    expect(dipContext({ latitude: 40, longitude: -86, altitudeFt: 0 })).toEqual({ kind: "touch_and_go", field: null, onGround: true });
+  });
+
+  it("reads a low point within 100 ft of a known field's elevation as a touch-and-go at that field", () => {
+    expect(dipContext({ ...r2, altitudeFt: 960 })).toEqual({ kind: "touch_and_go", field: "2R2", onGround: false });
+    expect(dipContext({ ...r2, altitudeFt: 1_300 })).toEqual({ kind: "near_field", field: "2R2" });
+    expect(dipContext({ latitude: 40, longitude: -86, altitudeFt: 960 })).toEqual({ kind: "open" });
+  });
+
+  // A private strip right under the watch center (test-only entry; the real list is filled from verified FAA data).
+  const strip = [{ id: "TEST1", latitude: CENTER.latitude, longitude: CENTER.longitude, elevationFt: 850 }];
+
+  it("does not score a touch-and-go at a private strip", () => {
+    const result = assessPattern(base({ visits: [passOver(1, CENTER, 920)], extraAirstrips: strip }));
+    expect(result.reasons.find((r) => r.code === "touch_and_go")?.label).toMatch(/TEST1/);
+    expect(result.reasons.some((r) => r.code === "close_dip" || r.code === "near_field_dip")).toBe(false);
+  });
+
+  it("counts a higher dip near a private strip at 0.5 per pass, capped at 1.5", () => {
+    const one = assessPattern(base({ visits: [passOver(1, CENTER, 1_400)], extraAirstrips: strip }));
+    expect(one.reasons.find((r) => r.code === "near_field_dip")?.weight).toBe(0.5);
+    expect(one.reasons.some((r) => r.code === "close_dip")).toBe(false);
+    const many = assessPattern(base({ visits: [1, 2, 3, 4].map((d) => passOver(d, CENTER, 1_400)), extraAirstrips: strip }));
+    expect(many.reasons.find((r) => r.code === "near_field_dip")?.weight).toBe(1.5);
+  });
+
+  it("treats an on-ground report as a touch-and-go even with no strip on file", () => {
+    const result = assessPattern(base({ visits: [passOver(1, CENTER, 0)] }));
+    expect(result.reasons.find((r) => r.code === "touch_and_go")?.evidence).toBe("Observed");
+    expect(result.reasons.some((r) => r.code === "close_dip")).toBe(false);
+  });
+
+  it("keeps full weight for repeated dips in open country", () => {
+    const visits = [1, 2].map((day) => passOver(day, CENTER, 1_400));
+    const result = assessPattern(base({ visits }));
+    expect(result.reasons.find((r) => r.code === "close_dip")?.weight).toBe(3);
+    expect(result.reasons.some((r) => r.code === "near_field_dip" || r.code === "touch_and_go")).toBe(false);
   });
 });

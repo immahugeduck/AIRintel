@@ -61,7 +61,7 @@ export class ControlTooCloseError extends Error {
 }
 
 /** Gap kept between a control circle's edge and the edge of any circle where the user was netted. */
-export const CONTROL_EDGE_MARGIN_MI = 1;
+export const CONTROL_EDGE_MARGIN_MI = 0.5;
 /** Follow-me history window: watch centers used in this many days also count as "places you go". */
 export const CONTROL_PLACE_HISTORY_DAYS = 30;
 
@@ -87,7 +87,7 @@ export function controlTooClose(control: Place, places: readonly Place[]): { dis
  * Saves the control circle in `input.slot`. Moving it or changing its radius clears its success marker and its old
  * sightings (they described a different place). Rejects a circle that is too close to, or overlaps, the user's saved
  * watch circle or any watch center they were netted at in the last CONTROL_PLACE_HISTORY_DAYS days (follow me moves
- * the watch center, so "where I go" is more than today's center).
+ * the watch center, so "where I go" is more than today's center). Only places used on 2+ local days count.
  */
 export async function upsertControlArea(db: Queryable, userId: string, input: z.output<typeof controlAreaInputSchema>): Promise<void> {
   const [{ rows: watch }, { rows: recent }] = await Promise.all([
@@ -99,6 +99,8 @@ export async function upsertControlArea(db: Queryable, userId: string, input: z.
          from airintel_private.encounters
         where user_id = $1::uuid and entered_at >= now() - make_interval(days => $2::integer)
         group by 1, 2
+        -- Regular places only: a follow-me center used on 2+ local days. Driving through somewhere once no longer blocks a control.
+        having count(distinct (entered_at at time zone 'America/Indiana/Indianapolis')::date) >= 2
         limit 500`,
       [userId, CONTROL_PLACE_HISTORY_DAYS],
     ),

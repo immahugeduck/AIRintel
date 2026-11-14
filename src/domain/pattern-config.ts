@@ -75,5 +75,13 @@ export const KNOWN_AIRPORTS: readonly KnownAirport[] = [
   { id: "KGPC", latitude: 39.6336, longitude: -86.8138, elevationFt: 842 },
 ];
 
+/**
+ * Private and small airstrips near the user. A dip within `airstripNm` of one scores 0.5 instead of the full close-dip
+ * weight (a touch-and-go or low pass there looks exactly like a dip), and a low point within ~100 ft of the strip's
+ * elevation is read as a touch-and-go (0). Add only entries checked against FAA data (FAA ID, coordinates, elevation).
+ * Intentionally empty until verified; public fields in KNOWN_AIRPORTS are checked the same way.
+ */
+export const KNOWN_AIRSTRIPS: readonly KnownAirport[] = [];
+
 /** Time zone used to count "days" for recurrence and control comparison. */
 export const PATTERN_TIME_ZONE = "America/Indianapolis";

@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { distanceNm } from "./geometry.js";
-import { CHARTER_OPERATORS, EDUCATION_OWNER, KNOWN_AIRPORTS, PATTERN_TIME_ZONE, SCHEDULED_OPERATORS, TRAINING_FLEETS } from "./pattern-config.js";
+import { CHARTER_OPERATORS, EDUCATION_OWNER, KNOWN_AIRPORTS, KNOWN_AIRSTRIPS, PATTERN_TIME_ZONE, type KnownAirport, SCHEDULED_OPERATORS, TRAINING_FLEETS } from "./pattern-config.js";
 
-export { CHARTER_OPERATORS, KNOWN_AIRPORTS, SCHEDULED_OPERATORS, TRAINING_FLEETS } from "./pattern-config.js";
+export { CHARTER_OPERATORS, KNOWN_AIRPORTS, KNOWN_AIRSTRIPS, SCHEDULED_OPERATORS, TRAINING_FLEETS } from "./pattern-config.js";
 
 /**
  * Pattern flags (`pattern-flags-v4`; see assessPattern for what changed from v3): a deterministic review-priority score for netted aircraft.
@@ -87,6 +87,8 @@ export type PatternInput = {
   /** Control-circle comparison (log scope). Absent when the user has no swept control circle. */
   control?: { activeCircles: number; daysAtControls: number } | undefined;
   identity?: PatternIdentity | undefined;
+  /** Airstrips in addition to KNOWN_AIRSTRIPS (tests, future per-user settings). */
+  extraAirstrips?: readonly KnownAirport[] | undefined;
   /** IANA zone used to count days. Defaults to PATTERN_TIME_ZONE. */
   timeZone?: string | undefined;
 };
@@ -164,6 +166,15 @@ export const PATTERN_THRESHOLDS = {
   /** v5: another entry the same local day at least this many hours after the previous one. */
   repeatGapHours: 2,
   repeatStrongDays: 3,
+  /** A dip whose low point is within this distance of a known airport or airstrip is "near a field". */
+  airstripNm: 1,
+  /** Near a field, a low point at most this far above field elevation is read as a touch-and-go / low approach. */
+  touchAndGoAglFt: 100,
+  /** At or below this reported altitude the provider said "on the ground" (stored as 0 ft). */
+  onGroundAltitudeFt: 100,
+  /** Weight of each near-field dip (max `nearFieldDipMax`): ambiguous, so counted but lightly. */
+  nearFieldDipWeight: 0.5,
+  nearFieldDipMax: 1.5,
   priorityScore: 7,
   reviewScore: 4,
 } as const;
@@ -387,7 +398,12 @@ export function sameDayRepeatDays(entries: readonly string[], timeZone: string =
   return { days, maxEntriesInDay };
 }
 
-export type DipEvidence = { assessable: boolean; altitudeChecked: boolean; speedChecked: boolean; altitudeDropFt: number; speedDropKt: number; altitudeDip: boolean; speedDip: boolean };
+export type DipLowPoint = { latitude: number; longitude: number; altitudeFt: number | null };
+export type DipEvidence = {
+  assessable: boolean; altitudeChecked: boolean; speedChecked: boolean; altitudeDropFt: number; speedDropKt: number; altitudeDip: boolean; speedDip: boolean;
+  /** Lowest-altitude position (or slowest, for a speed-only dip) of the deepest dipping traversal; null without a dip. */
+  lowPoint: DipLowPoint | null;
+};
 
 /**
  * Dip near the watch center (Calculated): compares the last positions before entering 2 mi of the center, the lowest
@@ -396,7 +412,7 @@ export type DipEvidence = { assessable: boolean; altitudeChecked: boolean; speed
  */
 export function dipEvidence(visit: PatternVisit): DipEvidence {
   const T = PATTERN_THRESHOLDS;
-  const none: DipEvidence = { assessable: false, altitudeChecked: false, speedChecked: false, altitudeDropFt: 0, speedDropKt: 0, altitudeDip: false, speedDip: false };
+  const none: DipEvidence = { assessable: false, altitudeChecked: false, speedChecked: false, altitudeDropFt: 0, speedDropKt: 0, altitudeDip: false, speedDip: false, lowPoint: null };
   if (!visit.center) return none;
   const c = visit.center;
   const points = visit.positions
@@ -406,6 +422,7 @@ export function dipEvidence(visit: PatternVisit): DipEvidence {
   // Each traversal of the 2 mi zone is judged on its own: "before" and "after" samples stop at the zone boundary, so a
   // second pass through the zone never counts as recovery from the first.
   const result: DipEvidence = { ...none };
+  let deepestDropFt = -Infinity;
   let i = 0;
   while (i < points.length) {
     if (!points[i]!.inside) { i += 1; continue; }
@@ -435,10 +452,39 @@ export function dipEvidence(visit: PatternVisit): DipEvidence {
     result.speedChecked = result.speedChecked || spd.known;
     result.altitudeDropFt = Math.max(result.altitudeDropFt, alt.drop);
     result.speedDropKt = Math.max(result.speedDropKt, spd.drop);
+    if ((alt.dip || spd.dip) && (alt.drop > deepestDropFt || result.lowPoint === null)) {
+      deepestDropFt = alt.drop;
+      const withAlt = inside.filter((p) => p.altitudeFt !== null);
+      const pick = alt.dip && withAlt.length > 0
+        ? withAlt.reduce((lo, p) => (p.altitudeFt! < lo.altitudeFt! ? p : lo))
+        : inside.filter((p) => p.groundSpeedKt !== null).reduce((lo, p) => (p.groundSpeedKt! < lo.groundSpeedKt! ? p : lo));
+      result.lowPoint = { latitude: pick.latitude, longitude: pick.longitude, altitudeFt: pick.altitudeFt };
+    }
     result.altitudeDip = result.altitudeDip || alt.dip;
     result.speedDip = result.speedDip || spd.dip;
   }
   return result;
+}
+
+export type DipContext = { kind: "touch_and_go"; field: string | null; onGround: boolean } | { kind: "near_field"; field: string } | { kind: "open" };
+
+/**
+ * What a dip's low point was near (Supported inference). Reported on the ground, or within `touchAndGoAglFt` of a
+ * known field's elevation within `airstripNm`: touch-and-go / low approach. Within `airstripNm` of a field but higher:
+ * near a field (ambiguous). Otherwise: open country. GPS altitude is height above the WGS-84 ellipsoid, which reads
+ * roughly 50–115 ft below sea-level altitude in the US, so "within 100 ft" can include low passes up to ~200 ft.
+ */
+export function dipContext(low: DipLowPoint, extraFields: readonly KnownAirport[] = []): DipContext {
+  const T = PATTERN_THRESHOLDS;
+  if (low.altitudeFt !== null && low.altitudeFt <= T.onGroundAltitudeFt) return { kind: "touch_and_go", field: null, onGround: true };
+  let nearest: { id: string; elevationFt: number; nm: number } | null = null;
+  for (const field of [...extraFields, ...KNOWN_AIRSTRIPS, ...KNOWN_AIRPORTS]) {
+    const nm = distanceNm(field.latitude, field.longitude, low.latitude, low.longitude);
+    if (nm <= T.airstripNm && (!nearest || nm < nearest.nm)) nearest = { id: field.id, elevationFt: field.elevationFt, nm };
+  }
+  if (!nearest) return { kind: "open" };
+  if (low.altitudeFt !== null && low.altitudeFt - nearest.elevationFt <= T.touchAndGoAglFt) return { kind: "touch_and_go", field: nearest.id, onGround: false };
+  return { kind: "near_field", field: nearest.id };
 }
 
 /** Known airport whose traffic area explains a visit (centroid of its positions near the field, at pattern height). */
@@ -597,8 +643,30 @@ export function assessPattern(input: PatternInput): PatternAssessment {
   // v5: dips in altitude/speed inside 2 mi of the watch center (airport-area visits excluded: approaches descend).
   const dips = away.map((e) => dipEvidence(e.visit));
   const dipAssessable = dips.filter((d) => d.assessable).length;
-  const bothDips = dips.filter((d) => d.altitudeDip && d.speedDip);
-  const anyDips = dips.filter((d) => d.altitudeDip || d.speedDip);
+  const dipped = dips.filter((d) => d.altitudeDip || d.speedDip).map((d) => ({ d, where: dipContext(d.lowPoint!, input.extraAirstrips) }));
+  const touchAndGo = dipped.filter((x) => x.where.kind === "touch_and_go");
+  const nearField = dipped.filter((x) => x.where.kind === "near_field");
+  const anyDips = dipped.filter((x) => x.where.kind === "open").map((x) => x.d);
+  const bothDips = anyDips.filter((d) => d.altitudeDip && d.speedDip);
+  if (touchAndGo.length > 0) {
+    const fields = [...new Set(touchAndGo.flatMap((x) => (x.where.kind === "touch_and_go" && x.where.field ? [x.where.field] : [])))];
+    const onGround = touchAndGo.some((x) => x.where.kind === "touch_and_go" && x.where.onGround);
+    reasons.push({
+      code: "touch_and_go",
+      label: `${plural(touchAndGo.length, "dip")} went down to ${onGround ? "the ground (provider reported on-ground)" : `within ${T.touchAndGoAglFt} ft of field elevation`}${fields.length ? ` at ${fields.join(", ")}` : ""}: touch-and-go or low approach, not scored`,
+      evidence: onGround && fields.length === 0 ? "Observed" : "Supported inference",
+      weight: 0,
+    });
+  }
+  if (nearField.length > 0) {
+    const fields = [...new Set(nearField.map((x) => (x.where.kind === "near_field" ? x.where.field : "")))].join(", ");
+    reasons.push({
+      code: "near_field_dip",
+      label: `${plural(nearField.length, "dip")} within ${T.airstripNm} NM of ${fields} but higher than a touch-and-go: could be a low pass or go-around, counted lightly`,
+      evidence: "Supported inference",
+      weight: Math.min(T.nearFieldDipMax, nearField.length * T.nearFieldDipWeight),
+    });
+  }
   if (anyDips.length > 0) {
     const maxAlt = Math.round(Math.max(...anyDips.map((d) => d.altitudeDropFt)));
     const maxSpd = Math.round(Math.max(...anyDips.map((d) => d.speedDropKt)));
@@ -606,11 +674,11 @@ export function assessPattern(input: PatternInput): PatternAssessment {
     const weight = bothDips.length >= 2 ? 3 : bothDips.length === 1 ? 2 : 1;
     reasons.push({
       code: "close_dip",
-      label: `Dropped ${kind} within 2 mi of your watch center and recovered after, on ${anyDips.length} of ${plural(dipAssessable, "checkable pass", "checkable passes")} (largest drops ${maxAlt.toLocaleString("en-US")} ft, ${maxSpd} kt)${training ? "; trainers also practice slow flight and descents" : ""}`,
+      label: `Dropped ${kind} within 2 mi of your watch center, away from known fields, and recovered after, on ${anyDips.length} of ${plural(dipAssessable, "checkable pass", "checkable passes")} (largest drops ${maxAlt.toLocaleString("en-US")} ft, ${maxSpd} kt)${training ? "; trainers also practice slow flight and descents" : ""}`,
       evidence: "Calculated",
       weight: training ? Math.max(1, weight - 1) : weight,
     });
-  } else if (dipAssessable > 0) {
+  } else if (dipAssessable > 0 && dipped.length === 0) {
     // Each metric is reported only for the passes where it was actually checked.
     const altChecked = dips.filter((d) => d.altitudeChecked).length;
     const spdChecked = dips.filter((d) => d.speedChecked).length;
