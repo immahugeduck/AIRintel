@@ -39,6 +39,7 @@ export const TRAINING_FLEETS: readonly TrainingFleet[] = [
   { label: "Indiana State University flight-training fleet (Terre Haute)", callsignDesignator: "ISU", owner: /\bINDIANA STATE UNIVERSITY\b/ },
   { label: "ATP Flight School training fleet", callsignDesignator: "CXK", owner: /^(ATP AIRCRAFT|CAREER TRACK)\b/ },
   { label: "Tom Wood Aviation / Textron Cessna 172 training fleet", registration: /^N\d{1,3}TW$/, owner: /\bTOM WOOD AVIATION\b/ },
+  { label: "BOLDFlight flight-training fleet (Greenwood / Danville)", owner: /\bBOLD ?FLIGHT\b|\bBOLD AVIATION\b/ },
 ];
 
 /** FAA "government" registrants that are schools rather than agencies (public universities are government-registered). */
@@ -68,6 +69,10 @@ export const KNOWN_AIRPORTS: readonly KnownAirport[] = [
   { id: "KFWA", latitude: 40.9785, longitude: -85.1951, elevationFt: 815 },
   { id: "KSBN", latitude: 41.7087, longitude: -86.3173, elevationFt: 799 },
   { id: "KEVV", latitude: 38.037, longitude: -87.5324, elevationFt: 418 },
+  // Hendricks County-Gordon Graham Field, Danville (FAA 2R2; field elevation 897.8 ft, runway 18/36).
+  { id: "2R2", latitude: 39.7467, longitude: -86.4753, elevationFt: 898 },
+  // Putnam County Regional, Greencastle (FAA GPC, formerly 4I7; field elevation 842 ft, runway 18/36).
+  { id: "KGPC", latitude: 39.6336, longitude: -86.8138, elevationFt: 842 },
 ];
 
 /** Time zone used to count "days" for recurrence and control comparison. */

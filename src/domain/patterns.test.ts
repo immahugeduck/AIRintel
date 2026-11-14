@@ -100,19 +100,54 @@ describe("routine explanations (pass 1)", () => {
     expect(routineExplanation({ callsign: "N8274N", registration: "N8274N" })).toBeNull();
   });
 
-  it("keeps a circling training aircraft routine (turns around a point are a training maneuver)", () => {
+  it("does not let a training label excuse orbits centered on the watch center away from airports (v4)", () => {
     const result = assessPattern(base({ callsign: "LTA661", registration: "N661L", visitCount: 36, visits: [spatialOrbit(1, 20, 60, 1), spatialOrbit(2, 20, 60, 1), spatialOrbit(3, 20, 60, 1)] }));
-    expect(result.tier).toBe("routine");
-    expect(result.explainedBy).toMatch(/LIFT/);
-    expect(result.score).toBeLessThanOrEqual(0);
+    expect(result.context).toMatch(/LIFT/);
+    expect(result.fit).toBe("not_explained");
+    expect(result.tier).toBe("review");
+    expect(result.reasons.find((r) => r.code === "context_mismatch")?.label).toMatch(/orbited your watch center/);
   });
 
-  it("explains circling low over a known airport as traffic-pattern work", () => {
+  it("keeps a trainer doing turns around a point away from you routine (practice area, not centered on you)", () => {
+    const visits = [1, 2, 3].map((day) => spatialOrbit(day, 20, 60, 1, { offsetNm: 4 }));
+    const result = assessPattern(base({ callsign: "LTA661", registration: "N661L", visitCount: 36, visits }));
+    expect(result.fit).toBe("consistent");
+    expect(result.tier).toBe("routine");
+  });
+
+  it("explains circling low over a known airport as airport-area traffic", () => {
     const klaf = { latitude: 40.4123, longitude: -86.9369 };
     const visits = [1, 2, 3].map((day) => spatialOrbit(day, 30, 60, 0.6, { center: klaf, offsetNm: 0.5, altitudeFt: 1_800 }));
     const result = assessPattern(base({ callsign: "N12345", registration: "N12345", visitCount: 5, visits }));
-    expect(result.reasons.some((r) => r.code === "airport_pattern")).toBe(true);
+    expect(result.reasons.some((r) => r.code === "airport_area")).toBe(true);
+    expect(result.reasons.some((r) => r.code === "circling")).toBe(false);
     expect(result.tier).toBe("routine");
+  });
+
+  it("judges airport explanations per visit: pattern work at 2R2 does not excuse orbits over you elsewhere", () => {
+    const field = { latitude: 39.7467, longitude: -86.4753 };
+    const pattern = [1, 2].map((day) => spatialOrbit(day, 20, 60, 0.6, { center: field, offsetNm: 0.5, altitudeFt: 1_700 }));
+    const overYou = [3, 4, 5].map((day) => spatialOrbit(day, 20, 60, 3));
+    const result = assessPattern(base({ visitCount: 5, visits: [...pattern, ...overYou] }));
+    expect(result.reasons.find((r) => r.code === "airport_area")?.weight).toBe(-1);
+    expect(result.reasons.map((r) => r.code)).toEqual(expect.arrayContaining(["circling", "centered_orbit"]));
+    expect(["review", "priority"]).toContain(result.tier);
+  });
+
+  it("scores a BOLDFlight 172 working the 2R2 pattern near a Danville watch center as routine and consistent", () => {
+    const hospital = { latitude: 39.7615, longitude: -86.5025 }; // ~1.6 NM WNW of 2R2
+    const field = { latitude: 39.7467, longitude: -86.4753 };
+    const visits = [1, 3, 5, 8, 12].map((day) => ({ ...spatialOrbit(day, 25, 60, 0.6, { center: field, offsetNm: 0.6, altitudeFt: 1_650 }), center: hospital }));
+    const result = assessPattern(base({ icao24: "a6c277", callsign: "N5346D", registration: "N5346D", aircraftTypeCode: "C172", visitCount: 32, visits, identity: { registrantKind: "business", registrantName: "BOLDFLIGHT LLC" } }));
+    expect(result.context).toMatch(/BOLDFlight/);
+    expect(result.fit).toBe("consistent");
+    expect(result.tier).toBe("routine");
+  });
+
+  it("flags a charter jet that circles away from airports as not explained by its label", () => {
+    const result = assessPattern(base({ callsign: "EJA123", registration: "N123QS", visitCount: 2, visits: [spatialOrbit(1, 20, 60, 3, { offsetNm: 4, speedKt: 200, altitudeFt: 5_000 })] }));
+    expect(result.fit).toBe("not_explained");
+    expect(result.tier).not.toBe("routine");
   });
 
   it("treats cruise-altitude transit as routine", () => {
@@ -149,10 +184,12 @@ describe("behavior and location passes (2 and 3)", () => {
     expect(distant.reasons.find((r) => r.code === "separate_places")?.weight).toBe(1);
   });
 
-  it("does not let location correlation pull a known training fleet out of routine", () => {
+  it("lets same-day location correlation pull a training fleet out of routine (v4: no label explains being followed)", () => {
     const sightings = [{ enteredAt: t(1, 0), latitude: 40, longitude: -86 }, { enteredAt: t(1, 90), latitude: 40.4, longitude: -86.9 }];
     const result = assessPattern(base({ callsign: "PDU56", registration: "N856PU", visitCount: 6, visits: [straightPass(1, 6, 60), straightPass(2, 6, 60), straightPass(3, 6, 60)], sightings }));
-    expect(result.tier).toBe("routine");
+    expect(result.fit).toBe("not_explained");
+    expect(result.reasons.some((r) => r.code === "followed_locations")).toBe(true);
+    expect(result.tier).toBe("review");
   });
 
   it("scores the Purdue trainer from the 2026-11-10 review as routine, not priority 7", () => {
