@@ -5,7 +5,7 @@ import { CHARTER_OPERATORS, EDUCATION_OWNER, KNOWN_AIRPORTS, PATTERN_TIME_ZONE, 
 export { CHARTER_OPERATORS, KNOWN_AIRPORTS, SCHEDULED_OPERATORS, TRAINING_FLEETS } from "./pattern-config.js";
 
 /**
- * Pattern flags (`pattern-flags-v3`): a deterministic review-priority score for netted aircraft.
+ * Pattern flags (`pattern-flags-v4`; see assessPattern for what changed from v3): a deterministic review-priority score for netted aircraft.
  *
  * What this is: a ranking of RECORDED behavior inside the watch radius (Calculated) plus identity facts (Observed),
  * so that the few aircraft whose behavior is unusual for this area rise to the top of the list for a human to review.
@@ -29,7 +29,7 @@ export { CHARTER_OPERATORS, KNOWN_AIRPORTS, SCHEDULED_OPERATORS, TRAINING_FLEETS
  *   identity gaps. Aircraft with too few recorded positions get "insufficient" (not enough data) instead of a guess,
  *   and can never reach "priority" on identity facts alone.
  */
-export const PATTERN_ALGORITHM_VERSION = "pattern-flags-v3";
+export const PATTERN_ALGORITHM_VERSION = "pattern-flags-v4";
 
 export type PatternPosition = {
   observedAt: string;
@@ -109,6 +109,10 @@ export const patternAssessmentSchema = z.object({
   reasons: z.array(patternReasonSchema),
   /** "ok": ≥ 2 visits with enough positions to judge; "limited": 1; "sparse": none. */
   coverage: z.enum(["ok", "limited", "sparse"]),
+  /** Who/what the aircraft is (training fleet, charter, mostly airport traffic), shown at every tier. v4+. */
+  context: z.string().nullish(),
+  /** Whether that context covers the recorded behavior. null = no context or a scheduled flight number. v4+. */
+  fit: z.enum(["consistent", "not_explained"]).nullish(),
 });
 export type PatternReason = z.infer<typeof patternReasonSchema>;
 export type PatternTier = z.infer<typeof patternTierSchema>;
@@ -323,60 +327,99 @@ export function airportPatternAt(centroid: { latitude: number; longitude: number
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-/** Pure, deterministic assessment of one netted aircraft. */
+/** Known airport whose traffic area explains a visit (centroid of its positions near the field, at pattern height). */
+export function visitAirport(visit: PatternVisit, geometry: CirclingEvidence): string | null {
+  const points = visit.positions.filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+  if (points.length === 0) return null;
+  const centroid = geometry.centroid ?? { latitude: points.reduce((s, p) => s + p.latitude, 0) / points.length, longitude: points.reduce((s, p) => s + p.longitude, 0) / points.length };
+  const altitudes = points.flatMap((p) => (p.altitudeFt === null ? [] : [p.altitudeFt]));
+  return airportPatternAt(centroid, geometry.medianAltitudeFt ?? median(altitudes));
+}
+
+/**
+ * Pure, deterministic assessment of one netted aircraft (`pattern-flags-v4`).
+ *
+ * v4 principle: score BEHAVIOR; treat WHO the aircraft is as context that must fit what it did.
+ *  - Training-fleet and charter labels lower the score (−3) but no longer force "routine". Behavior the label does not
+ *    explain (showing up at your separate locations within hours, orbits centered on your watch center away from any
+ *    airport, absence from your control circles) keeps full weight, and `fit` reports "not_explained".
+ *  - Airport explanations are judged per visit: visits flown within 3 NM of a known field at pattern height are
+ *    "airport area" (takeoffs, landings, pattern work) and their circling/loitering/low-slow is not scored; visits
+ *    elsewhere are scored normally. One explained visit no longer excuses the rest, and vice versa.
+ *  - Only published scheduled/cargo flight numbers still force "routine".
+ */
 export function assessPattern(input: PatternInput): PatternAssessment {
   const T = PATTERN_THRESHOLDS;
   const timeZone = input.timeZone ?? PATTERN_TIME_ZONE;
   const identity = input.identity ?? {};
   const reasons: PatternReason[] = [];
-  const positions = input.visits.flatMap((visit) => visit.positions);
-  const altitudes = positions.flatMap((p) => (p.altitudeFt === null ? [] : [p.altitudeFt]));
-  const speeds = positions.flatMap((p) => (p.groundSpeedKt === null ? [] : [p.groundSpeedKt]));
-  const verticals = positions.flatMap((p) => (p.verticalRateFpm === null ? [] : [p.verticalRateFpm]));
-  const medianAltitudeFt = median(altitudes);
-  const medianSpeedKt = median(speeds);
+  const allPositions = input.visits.flatMap((visit) => visit.positions);
+  const allAltitudes = allPositions.flatMap((p) => (p.altitudeFt === null ? [] : [p.altitudeFt]));
+  const verticals = allPositions.flatMap((p) => (p.verticalRateFpm === null ? [] : [p.verticalRateFpm]));
+  const overallAltitudeFt = median(allAltitudes);
 
-  // Pass 2 geometry first: the airport-pattern explanation depends on it.
-  const evidence = input.visits.map((visit) => ({ visit, geometry: circlingEvidence(visit.positions) }));
+  // Geometry and airport area per visit.
+  const evidence = input.visits.map((visit) => {
+    const geometry = circlingEvidence(visit.positions);
+    return { visit, geometry, airport: visitAirport(visit, geometry) };
+  });
   const assessable = evidence.filter((e) => e.geometry.assessable).length;
-  const circlingVisits = evidence.filter((e) => e.geometry.circling);
-  const patternAirports = circlingVisits.map((e) => airportPatternAt(e.geometry.centroid!, e.geometry.medianAltitudeFt));
-  const airportExplained = circlingVisits.length > 0 && patternAirports.every((id) => id !== null);
+  const positioned = evidence.filter((e) => e.visit.positions.length > 0);
+  const airportVisits = positioned.filter((e) => e.airport !== null);
+  const away = evidence.filter((e) => e.airport === null);
+  const mostlyAirport = positioned.length > 0 && airportVisits.length * 2 >= positioned.length;
 
-  // Pass 1: routine explanations.
-  let routine: RoutineMatch | null = routineExplanation({ callsign: input.callsign, registration: input.registration, registryRegistration: input.registryRegistration, registrantName: identity.registrantName });
-  if (routine) reasons.push({ ...routine, weight: -4 });
-  if (!routine && airportExplained) {
-    const ids = [...new Set(patternAirports as string[])].join(", ");
-    routine = { code: "airport_pattern", label: `Circling within ${T.airportPatternNm} NM of ${ids} at pattern altitude (traffic pattern or practice approaches)`, evidence: "Supported inference" };
-    reasons.push({ ...routine, weight: -3 });
+  // Pass 1: context (labels and profiles).
+  const label: RoutineMatch | null = routineExplanation({ callsign: input.callsign, registration: input.registration, registryRegistration: input.registryRegistration, registrantName: identity.registrantName });
+  const scheduled = label?.code === "scheduled_operator";
+  const training = label?.code === "training_fleet";
+  const charter = label?.code === "charter_operator";
+  if (label) reasons.push({ ...label, label: scheduled ? label.label : `${label.label} (context: lowers the score, does not excuse unexplained behavior)`, weight: scheduled ? -4 : -3 });
+  if (airportVisits.length > 0) {
+    const ids = [...new Set(airportVisits.map((e) => e.airport as string))].join(", ");
+    reasons.push({
+      code: "airport_area",
+      label: `${airportVisits.length} of ${positioned.length} recorded visits were within ${T.airportPatternNm} NM of ${ids} at pattern height (takeoffs, landings, traffic pattern); behavior on those visits is not scored`,
+      evidence: "Supported inference",
+      weight: mostlyAirport ? -3 : -1,
+    });
   }
-  if (medianAltitudeFt !== null && medianAltitudeFt >= T.cruiseAltitudeFt) {
-    reasons.push({ code: "cruise_transit", label: `Passing through at cruise altitude (median ${Math.round(medianAltitudeFt).toLocaleString("en-US")} ft)`, evidence: "Calculated", weight: -3 });
+  if (overallAltitudeFt !== null && overallAltitudeFt >= T.cruiseAltitudeFt) {
+    reasons.push({ code: "cruise_transit", label: `Passing through at cruise altitude (median ${Math.round(overallAltitudeFt).toLocaleString("en-US")} ft)`, evidence: "Calculated", weight: -3 });
   }
   if (verticals.length >= 3 && verticals.filter((v) => Math.abs(v) >= T.climbDescentFpm).length / verticals.length >= 0.6) {
     reasons.push({ code: "climb_descent", label: "Climbing or descending steadily through the radius (arrival/departure profile)", evidence: "Calculated", weight: -2 });
   }
   const transit = reasons.some((r) => r.code === "cruise_transit");
 
-  // Pass 2: behavior inside the radius.
+  // Pass 2: behavior inside the radius, only from visits NOT explained by an airport area.
+  const circlingVisits = away.filter((e) => e.geometry.circling);
+  let centeredCount = 0;
   if (circlingVisits.length > 0) {
     const maxTurn = Math.max(...circlingVisits.map((e) => e.geometry.turnDeg));
     const estimated = circlingVisits.every((e) => e.geometry.method === "confined");
-    reasons.push({ code: "circling", label: `Circled inside the radius on ${plural(circlingVisits.length, "visit")} (${estimated ? "about " : "up to "}${Math.round(maxTurn).toLocaleString("en-US")}° of turn${estimated ? ", estimated from distance flown in a small area" : ""})`, evidence: "Calculated", weight: 3 });
-    const centered = circlingVisits.filter((e) => e.visit.center && distanceNm(e.visit.center.latitude, e.visit.center.longitude, e.geometry.centroid!.latitude, e.geometry.centroid!.longitude) <= T.orbitCenterNm).length;
-    if (centered > 0) reasons.push({ code: "centered_orbit", label: `Orbit centered within ${T.orbitCenterNm} NM of the watch center on ${plural(centered, "visit")}`, evidence: "Calculated", weight: 2 });
+    reasons.push({
+      code: "circling",
+      label: `Circled away from any known airport on ${plural(circlingVisits.length, "visit")} (${estimated ? "about " : "up to "}${Math.round(maxTurn).toLocaleString("en-US")}° of turn${estimated ? ", estimated from distance flown in a small area" : ""})${training ? "; turns around a point are a normal training maneuver" : ""}`,
+      evidence: "Calculated",
+      weight: training ? 1 : 3,
+    });
+    centeredCount = circlingVisits.filter((e) => e.visit.center && distanceNm(e.visit.center.latitude, e.visit.center.longitude, e.geometry.centroid!.latitude, e.geometry.centroid!.longitude) <= T.orbitCenterNm).length;
+    if (centeredCount > 0) reasons.push({ code: "centered_orbit", label: `Orbit centered within ${T.orbitCenterNm} NM of your watch center, away from any airport, on ${plural(centeredCount, "visit")}`, evidence: "Calculated", weight: centeredCount >= 2 ? 3 : 2 });
   }
-  const longVisits = input.visits.filter((visit) => visitMinutes(visit) >= T.loiterMinutes);
+  const longVisits = away.filter((e) => visitMinutes(e.visit) >= T.loiterMinutes).map((e) => e.visit);
   if (longVisits.length > 0) {
     const longest = Math.round(Math.max(...longVisits.map(visitMinutes)));
-    reasons.push({ code: "loiter", label: `Stayed inside the radius ${T.loiterMinutes}+ min on ${plural(longVisits.length, "visit")} (longest ${longest} min)`, evidence: "Calculated", weight: longVisits.length >= 3 ? 3 : 2 });
+    reasons.push({ code: "loiter", label: `Stayed inside the radius ${T.loiterMinutes}+ min away from any airport on ${plural(longVisits.length, "visit")} (longest ${longest} min)`, evidence: "Calculated", weight: training ? 1 : longVisits.length >= 3 ? 3 : 2 });
   }
-  if (positions.length >= T.minPositions && medianAltitudeFt !== null && medianSpeedKt !== null && medianAltitudeFt <= T.lowAltitudeFt && medianSpeedKt <= T.slowGroundSpeedKt) {
-    reasons.push({ code: "low_slow", label: `Low and slow (median ${Math.round(medianAltitudeFt).toLocaleString("en-US")} ft, ${Math.round(medianSpeedKt)} kt)`, evidence: "Calculated", weight: 1 });
+  const awayPositions = away.flatMap((e) => e.visit.positions);
+  const awayAltitudeFt = median(awayPositions.flatMap((p) => (p.altitudeFt === null ? [] : [p.altitudeFt])));
+  const awaySpeedKt = median(awayPositions.flatMap((p) => (p.groundSpeedKt === null ? [] : [p.groundSpeedKt])));
+  if (awayPositions.length >= T.minPositions && awayAltitudeFt !== null && awaySpeedKt !== null && awayAltitudeFt <= T.lowAltitudeFt && awaySpeedKt <= T.slowGroundSpeedKt) {
+    reasons.push({ code: "low_slow", label: `Low and slow away from airports (median ${Math.round(awayAltitudeFt).toLocaleString("en-US")} ft, ${Math.round(awaySpeedKt)} kt)${training ? "; normal for a trainer" : ""}`, evidence: "Calculated", weight: training ? 0 : 1 });
   }
 
-  // Pass 3: time-aware correlation with the user's own watch centers.
+  // Pass 3: time-aware correlation with the user's own watch centers. No label explains this.
   const places = timeCorrelatedPlaces(input.sightings, timeZone);
   const followed = !transit && places.pairs > 0;
   if (followed) {
@@ -399,21 +442,23 @@ export function assessPattern(input: PatternInput): PatternAssessment {
     reasons.push({ code: "rotorcraft_loiter", label: "Helicopter circling or loitering (news, medical, police and utility helicopters all do this)", evidence: "Supported inference", weight: 1 });
   }
 
-  // Recurrence across local days.
   const days = new Set(input.visits.map((visit) => localDay(visit.enteredAt, timeZone))).size;
 
-  // Pass 4: comparison with the user's control circles.
+  // Pass 4: comparison with the user's control circles (the empirical baseline).
+  let controlAbsent = false;
   if (input.control && input.control.activeCircles > 0) {
     const atControls = input.control.daysAtControls;
     const circles = input.control.activeCircles === 1 ? "your control circle" : "your control circles";
     if (atControls >= T.controlCommonDays && atControls * 2 >= days) {
       reasons.push({ code: "control_common", label: `Also seen at ${circles} on ${atControls} days: common local traffic, not specific to you`, evidence: "Calculated", weight: -2 });
     } else if (atControls === 0 && days >= T.controlAbsentYourDays) {
+      controlAbsent = true;
       reasons.push({ code: "control_absent", label: `Seen near you on ${days} days but never at ${circles}`, evidence: "Calculated", weight: 1 });
     }
   }
   if (input.visitCount >= T.recurrenceVisits && days >= T.recurrenceDays) {
-    reasons.push({ code: "recurrence", label: `${input.visitCount} entries, on ${days}+ local days`, evidence: "Observed", weight: routine ? 0 : 2 });
+    const recurrenceWeight = scheduled || mostlyAirport ? 0 : training || charter ? 1 : 2;
+    reasons.push({ code: "recurrence", label: `${input.visitCount} entries, on ${days}+ local days${mostlyAirport ? " (mostly airport traffic)" : ""}`, evidence: "Observed", weight: recurrenceWeight });
   }
   const hasRegistration = Boolean(input.registration?.trim() || input.registryRegistration?.trim());
   if (!input.callsign?.trim() || !hasRegistration) {
@@ -424,21 +469,31 @@ export function assessPattern(input: PatternInput): PatternAssessment {
   if (coverage === "sparse") reasons.push({ code: "sparse_coverage", label: `Too few recorded positions to judge turning (needs ${T.minPositions}+ over ${T.assessableMinutes}+ min in a visit)`, evidence: "Unknown", weight: 0 });
   if (input.visits.some((visit) => visit.downsampled)) reasons.push({ code: "downsampled", label: "Long visits were evenly downsampled before scoring", evidence: "Unknown", weight: 0 });
 
+  // Does the context (label or airport area) cover what was observed? Signals no label explains:
+  const unexplained: string[] = [];
+  if (followed) unexplained.push("showed up at your separate locations within hours");
+  if (centeredCount >= (training ? 2 : 1)) unexplained.push("orbited your watch center away from any airport");
+  if (controlAbsent) unexplained.push("never seen at your control circles");
+  if ((charter || (mostlyAirport && !training)) && circlingVisits.length > 0) unexplained.push("circled away from any airport");
+  const context = label?.label ?? (mostlyAirport ? reasons.find((r) => r.code === "airport_area")!.label : null);
+  const fit: PatternAssessment["fit"] = context === null || scheduled ? null : unexplained.length > 0 ? "not_explained" : "consistent";
+  if (fit === "not_explained") reasons.push({ code: "context_mismatch", label: `Context does not explain: ${unexplained.join("; ")}`, evidence: "Calculated", weight: 0 });
+
   let score = reasons.reduce((sum, reason) => sum + reason.weight, 0);
   const behaviorEvidence = reasons.some((r) => r.weight > 0 && r.code !== "identity_gap");
   let tier: PatternTier;
-  if (routine) {
-    // A routine operator, fleet or airport pattern stays routine: its circling, loitering and presence at several of
-    // your places are expected (training areas, holds, approaches, airline routes).
+  if (scheduled && !followed) {
     tier = "routine";
     score = Math.min(score, 0);
   } else if (score >= T.priorityScore) tier = coverage === "sparse" && !followed ? "review" : "priority";
   else if (score >= T.reviewScore) tier = "review";
-  else if (reasons.some((r) => r.code === "cruise_transit" || r.code === "climb_descent") && score <= 0) tier = "routine";
+  // A label that does not fit the behavior is exactly what the user should see: never bury it below "review".
+  else if (fit === "not_explained" && coverage !== "sparse") tier = "review";
+  else if (score <= 0 && reasons.some((r) => r.weight < 0) && fit !== "not_explained") tier = "routine";
   else if (coverage === "sparse" && !behaviorEvidence) tier = "insufficient";
   else tier = "low";
-  const explainedBy = tier === "routine" ? (routine?.label ?? reasons.find((r) => r.weight < 0)?.label ?? null) : null;
-  return { version: PATTERN_ALGORITHM_VERSION, tier, score, explainedBy, reasons: reasons.sort((a, b) => b.weight - a.weight), coverage };
+  const explainedBy = tier === "routine" ? (label?.label ?? reasons.find((r) => r.weight < 0)?.label ?? null) : null;
+  return { version: PATTERN_ALGORITHM_VERSION, tier, score, explainedBy, context, fit, reasons: reasons.sort((a, b) => b.weight - a.weight), coverage };
 }
 
 export const PATTERN_TIER_LABEL: Record<PatternTier, string> = {

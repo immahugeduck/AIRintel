@@ -1,4 +1,24 @@
-# Pattern flags (`pattern-flags-v3`)
+# Pattern flags (`pattern-flags-v4`)
+
+## v4 in one paragraph (2026-11-14)
+
+Score **behavior**; treat **who the aircraft is** as context that has to fit what it did. Training-fleet and charter
+labels lower the score (−3) but no longer force `routine`. Airport explanations are judged **per visit**: visits flown
+within 3 NM of a known field at pattern height (`airport_area`) are not scored for circling, loitering or low/slow,
+and every other visit is scored normally. Signals no label explains keep full weight: `followed_locations`,
+`centered_orbit` away from airports (2+ visits for trainers), `control_absent`, and circling away from airports by a
+charter jet or by mostly-airport traffic. Each assessment carries `context` (the label) and `fit`
+(`consistent` / `not_explained`). A `not_explained` fit never sits below **Review**, so a mismatch is always
+visible. Only published scheduled/cargo flight numbers still force `routine`. Added airports 2R2 (Danville) and
+KGPC (Greencastle), and the BOLDFlight fleet (by FAA owner name).
+
+**Known limit (Unknown):** an aircraft that only ever circles near an airport you happen to be close to is scored as
+airport traffic. Control circles and `followed_locations` are the checks that still work there.
+
+The v3 description below remains accurate for geometry, location correlation, identity and control passes; where it
+says labels or airport patterns force `routine`, v4 replaces that.
+
+# Pattern flags (v3 reference)
 
 A deterministic review-priority ranking for netted aircraft. Code: `src/domain/patterns.ts` (pure scoring),
 `src/domain/pattern-config.ts` (all regional lists and airports), `server/patterns.ts` (loads inputs), surfaced on

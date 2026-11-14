@@ -43,10 +43,11 @@ export function PatternBadge({ pattern }: { pattern: PatternAssessment | null | 
   if (!pattern || pattern.tier === "low") return null;
   if (pattern.tier === "insufficient") return <span className="pattern-badge is-insufficient" title="Too few recorded positions to judge behavior">Not enough data</span>;
   const label = pattern.tier === "routine" ? `Routine${pattern.explainedBy ? ` · ${shortExplanation(pattern.explainedBy)}` : ""}` : PATTERN_TIER_LABEL[pattern.tier];
-  return <span className={`pattern-badge is-${pattern.tier}`} title={pattern.tier === "routine" ? pattern.explainedBy ?? undefined : `Score ${pattern.score}`}>{label}</span>;
+  const mismatch = pattern.fit === "not_explained" && pattern.context ? ` · ${shortExplanation(pattern.context)}, not explained` : "";
+  return <span className={`pattern-badge is-${pattern.tier}`} title={pattern.tier === "routine" ? pattern.explainedBy ?? undefined : `Score ${pattern.score}`}>{label}{mismatch}</span>;
 }
 
-const shortExplanation = (text: string) => (/training/i.test(text) ? "flight school" : /cargo/i.test(text) ? "cargo" : /fractional|charter/i.test(text) ? "charter jet" : /flight number/i.test(text) ? "airline" : /cruise/i.test(text) ? "transit" : /climb|descend/i.test(text) ? "arrival/departure" : /traffic pattern/i.test(text) ? "airport pattern" : "explained");
+const shortExplanation = (text: string) => (/training/i.test(text) ? "flight school" : /cargo/i.test(text) ? "cargo" : /fractional|charter/i.test(text) ? "charter jet" : /flight number/i.test(text) ? "airline" : /cruise/i.test(text) ? "transit" : /climb|descend/i.test(text) ? "arrival/departure" : /traffic pattern|airport/i.test(text) ? "airport traffic" : "explained");
 
 /** "Why flagged": every reason with its evidence label (Observed / Calculated / Supported inference / Unknown). */
 export function PatternReasons({ pattern }: { pattern: PatternAssessment }) {
@@ -57,6 +58,12 @@ export function PatternReasons({ pattern }: { pattern: PatternAssessment }) {
       <button type="button" className="disclosure" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Hide pattern details" : pattern.tier === "routine" ? "Why routine" : "Why flagged"} · score {pattern.score}</button>
       {open && (
         <>
+          {pattern.context && (
+            <p className={`pattern-context ${pattern.fit === "not_explained" ? "is-mismatch" : ""}`}>
+              <strong>Context:</strong> {pattern.context}.{" "}
+              {pattern.fit === "not_explained" ? "Some recorded behavior is not explained by this (see below)." : pattern.fit === "consistent" ? "Recorded behavior is consistent with it." : ""}
+            </p>
+          )}
           <ul className="pattern-reason-list">
             {pattern.reasons.map((reason) => (
               <li key={reason.code} className={reason.weight > 0 ? "is-raise" : reason.weight < 0 ? "is-lower" : ""}>
