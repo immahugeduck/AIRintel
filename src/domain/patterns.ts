@@ -29,7 +29,7 @@ export { CHARTER_OPERATORS, KNOWN_AIRPORTS, SCHEDULED_OPERATORS, TRAINING_FLEETS
  *   identity gaps. Aircraft with too few recorded positions get "insufficient" (not enough data) instead of a guess,
  *   and can never reach "priority" on identity facts alone.
  */
-export const PATTERN_ALGORITHM_VERSION = "pattern-flags-v4";
+export const PATTERN_ALGORITHM_VERSION = "pattern-flags-v5";
 
 export type PatternPosition = {
   observedAt: string;
@@ -152,6 +152,18 @@ export const PATTERN_THRESHOLDS = {
   recurrenceDays: 3,
   controlCommonDays: 2,
   controlAbsentYourDays: 3,
+  /** v5: consecutive local days seen with the radius on your phone (follow mode). */
+  streakDays: 5,
+  streakStrongDays: 7,
+  /** v5: "dip" = drop in altitude and/or ground speed once inside this distance of the watch center, then recovery. */
+  dipRadiusNm: 1.74, // 2 statute miles
+  dipAltitudeFt: 300,
+  dipSpeedKt: 15,
+  /** Recovered at least this fraction of the drop after leaving the 2 mi zone (otherwise it is a descent, not a dip). */
+  dipRecoveryFraction: 0.5,
+  /** v5: another entry the same local day at least this many hours after the previous one. */
+  repeatGapHours: 2,
+  repeatStrongDays: 3,
   priorityScore: 7,
   reviewScore: 4,
 } as const;
@@ -327,6 +339,92 @@ export function airportPatternAt(centroid: { latitude: number; longitude: number
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+/** Longest run of consecutive local days in a set of YYYY-MM-DD strings. */
+export function longestDayStreak(days: Iterable<string>): number {
+  const sorted = [...new Set(days)].sort();
+  let best = 0;
+  let run = 0;
+  let previous: number | null = null;
+  for (const day of sorted) {
+    const at = Date.parse(`${day}T12:00:00Z`);
+    run = previous !== null && Math.round((at - previous) / 86_400_000) === 1 ? run + 1 : 1;
+    best = Math.max(best, run);
+    previous = at;
+  }
+  return best;
+}
+
+/**
+ * Sightings counted for the "follows your phone" checks: follow-mode sightings when any are tagged, otherwise all
+ * (mode unknown on older records). Fixed-center sightings are left out when follow-mode ones exist.
+ */
+export function phoneSightings(sightings: readonly PatternSighting[]): { list: PatternSighting[]; modeKnown: boolean } {
+  const follow = sightings.filter((s) => s.centerMode === "follow");
+  return follow.length > 0 ? { list: follow, modeKnown: true } : { list: [...sightings], modeKnown: false };
+}
+
+/** Local days with another entry at least `repeatGapHours` after the previous entry that day. */
+export function sameDayRepeatDays(entries: readonly string[], timeZone: string = PATTERN_TIME_ZONE): { days: number; maxEntriesInDay: number } {
+  const gapMs = PATTERN_THRESHOLDS.repeatGapHours * 3_600_000;
+  const byDay = new Map<string, number[]>();
+  for (const at of entries) {
+    const ms = Date.parse(at);
+    if (!Number.isFinite(ms)) continue;
+    const day = localDay(at, timeZone);
+    byDay.set(day, [...(byDay.get(day) ?? []), ms]);
+  }
+  let days = 0;
+  let maxEntriesInDay = 0;
+  for (const times of byDay.values()) {
+    times.sort((a, b) => a - b);
+    let spaced = 1;
+    for (let i = 1; i < times.length; i += 1) if (times[i]! - times[i - 1]! >= gapMs) spaced += 1;
+    if (spaced >= 2) {
+      days += 1;
+      maxEntriesInDay = Math.max(maxEntriesInDay, spaced);
+    }
+  }
+  return { days, maxEntriesInDay };
+}
+
+export type DipEvidence = { assessable: boolean; altitudeDropFt: number; speedDropKt: number; altitudeDip: boolean; speedDip: boolean };
+
+/**
+ * Dip near the watch center (Calculated): compares the last positions before entering 2 mi of the center, the lowest
+ * altitude / speed inside 2 mi, and the first positions after leaving. A drop that does not recover is a descent
+ * (arrival), not a dip. Needs positions on both sides of the 2 mi zone; otherwise "not assessable" (Unknown).
+ */
+export function dipEvidence(visit: PatternVisit): DipEvidence {
+  const T = PATTERN_THRESHOLDS;
+  const none: DipEvidence = { assessable: false, altitudeDropFt: 0, speedDropKt: 0, altitudeDip: false, speedDip: false };
+  if (!visit.center) return none;
+  const c = visit.center;
+  const points = visit.positions
+    .filter((p) => Number.isFinite(Date.parse(p.observedAt)))
+    .sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt))
+    .map((p) => ({ p, inside: distanceNm(c.latitude, c.longitude, p.latitude, p.longitude) <= T.dipRadiusNm }));
+  const first = points.findIndex((x) => x.inside);
+  if (first <= 0) return none;
+  let last = first;
+  while (last + 1 < points.length && points[last + 1]!.inside) last += 1;
+  if (last + 1 >= points.length) return none;
+  const before = points.slice(Math.max(0, first - 3), first).map((x) => x.p);
+  const inside = points.slice(first, last + 1).map((x) => x.p);
+  const after = points.slice(last + 1, last + 4).map((x) => x.p);
+  const measure = (key: "altitudeFt" | "groundSpeedKt", threshold: number) => {
+    const b = median(before.flatMap((p) => (p[key] === null ? [] : [p[key]!])));
+    const lows = inside.flatMap((p) => (p[key] === null ? [] : [p[key]!]));
+    const a = median(after.flatMap((p) => (p[key] === null ? [] : [p[key]!])));
+    if (b === null || a === null || lows.length === 0) return { drop: 0, dip: false, known: false };
+    const low = Math.min(...lows);
+    const drop = b - low;
+    return { drop, dip: drop >= threshold && a - low >= drop * T.dipRecoveryFraction, known: true };
+  };
+  const alt = measure("altitudeFt", T.dipAltitudeFt);
+  const spd = measure("groundSpeedKt", T.dipSpeedKt);
+  return { assessable: alt.known || spd.known, altitudeDropFt: alt.drop, speedDropKt: spd.drop, altitudeDip: alt.dip, speedDip: spd.dip };
+}
+
 /** Known airport whose traffic area explains a visit (centroid of its positions near the field, at pattern height). */
 export function visitAirport(visit: PatternVisit, geometry: CirclingEvidence): string | null {
   const points = visit.positions.filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
@@ -460,6 +558,46 @@ export function assessPattern(input: PatternInput): PatternAssessment {
     const recurrenceWeight = scheduled || mostlyAirport ? 0 : training || charter ? 1 : 2;
     reasons.push({ code: "recurrence", label: `${input.visitCount} entries, on ${days}+ local days${mostlyAirport ? " (mostly airport traffic)" : ""}`, evidence: "Observed", weight: recurrenceWeight });
   }
+  // v5: consecutive days with the radius on your phone.
+  const phone = phoneSightings(input.sightings.length > 0 ? input.sightings : input.visits.map((v) => ({ enteredAt: v.enteredAt, latitude: v.center?.latitude ?? 0, longitude: v.center?.longitude ?? 0, centerMode: null })));
+  const where = phone.modeKnown ? "with the radius on your phone" : "(watch-center mode not recorded)";
+  const streak = longestDayStreak(phone.list.map((s) => localDay(s.enteredAt, timeZone)));
+  const damped = training || charter || mostlyAirport;
+  if (streak >= T.streakDays && !scheduled) {
+    reasons.push({ code: "consecutive_days", label: `Seen ${streak} days in a row ${where}${damped ? " (expected for local/airport traffic)" : ""}`, evidence: "Observed", weight: damped ? 1 : streak >= T.streakStrongDays ? 3 : 2 });
+  }
+
+  // v5: separate passes hours apart on the same day.
+  const repeats = sameDayRepeatDays(phone.list.map((s) => s.enteredAt), timeZone);
+  if (repeats.days > 0 && !scheduled) {
+    reasons.push({
+      code: "same_day_repeat",
+      label: `Came back ${T.repeatGapHours}+ h after its previous pass on ${plural(repeats.days, "day")} (up to ${repeats.maxEntriesInDay} spaced passes in one day) ${where}`,
+      evidence: "Observed",
+      weight: damped ? (repeats.days >= T.repeatStrongDays ? 1 : 0) : repeats.days >= T.repeatStrongDays ? 2 : 1,
+    });
+  }
+
+  // v5: dips in altitude/speed inside 2 mi of the watch center (airport-area visits excluded: approaches descend).
+  const dips = away.map((e) => dipEvidence(e.visit));
+  const dipAssessable = dips.filter((d) => d.assessable).length;
+  const bothDips = dips.filter((d) => d.altitudeDip && d.speedDip);
+  const anyDips = dips.filter((d) => d.altitudeDip || d.speedDip);
+  if (anyDips.length > 0) {
+    const maxAlt = Math.round(Math.max(...anyDips.map((d) => d.altitudeDropFt)));
+    const maxSpd = Math.round(Math.max(...anyDips.map((d) => d.speedDropKt)));
+    const kind = bothDips.length > 0 ? "altitude and speed" : anyDips.some((d) => d.altitudeDip) ? "altitude" : "speed";
+    const weight = bothDips.length >= 2 ? 3 : bothDips.length === 1 ? 2 : 1;
+    reasons.push({
+      code: "close_dip",
+      label: `Dropped ${kind} within 2 mi of your watch center and recovered after, on ${plural(anyDips.length, "visit")} (largest drops ${maxAlt.toLocaleString("en-US")} ft, ${maxSpd} kt)${training ? "; trainers also practice slow flight and descents" : ""}`,
+      evidence: "Calculated",
+      weight: training ? Math.max(1, weight - 1) : weight,
+    });
+  } else if (away.length > 0 && dipAssessable === 0 && positioned.length > 0) {
+    reasons.push({ code: "dip_unknown", label: "Dips near you could not be checked: no recorded positions on both sides of the 2 mi zone", evidence: "Unknown", weight: 0 });
+  }
+
   const hasRegistration = Boolean(input.registration?.trim() || input.registryRegistration?.trim());
   if (!input.callsign?.trim() || !hasRegistration) {
     reasons.push({ code: "identity_gap", label: !input.callsign?.trim() ? "No callsign broadcast" : "No registration on record", evidence: "Observed", weight: 1 });
@@ -474,6 +612,7 @@ export function assessPattern(input: PatternInput): PatternAssessment {
   if (followed) unexplained.push("showed up at your separate locations within hours");
   if (centeredCount >= (training ? 2 : 1)) unexplained.push("orbited your watch center away from any airport");
   if (controlAbsent) unexplained.push("never seen at your control circles");
+  if (bothDips.length >= 2) unexplained.push("dropped altitude and speed within 2 mi of you on several visits");
   if ((charter || (mostlyAirport && !training)) && circlingVisits.length > 0) unexplained.push("circled away from any airport");
   const context = label?.label ?? (mostlyAirport ? reasons.find((r) => r.code === "airport_area")!.label : null);
   const fit: PatternAssessment["fit"] = context === null || scheduled ? null : unexplained.length > 0 ? "not_explained" : "consistent";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assessPattern, circlingEvidence, countSeparateCenters, headingDelta, localDay, routineExplanation, timeCorrelatedPlaces, type PatternInput, type PatternPosition, type PatternVisit } from "./patterns";
+import { assessPattern, circlingEvidence, countSeparateCenters, dipEvidence, headingDelta, localDay, longestDayStreak, phoneSightings, routineExplanation, sameDayRepeatDays, timeCorrelatedPlaces, type PatternInput, type PatternPosition, type PatternVisit } from "./patterns";
 
 // TEST FIXTURES ONLY: hand-written synthetic geometry used to exercise the pattern rules.
 // They are not provider data and are never shipped in the application bundle.
@@ -273,5 +273,93 @@ describe("local days", () => {
     const result = assessPattern(base({ visitCount: 5, visits: [evening(2), evening(3), { ...evening(2), enteredAt: "2026-11-01T22:00:00Z", lastSeenInRadiusAt: "2026-11-01T22:05:00Z" }] }));
     // Local days: Nov 1 (twice) and Nov 2 -> 2 days, below the 3-day recurrence threshold.
     expect(result.reasons.some((r) => r.code === "recurrence")).toBe(false);
+  });
+});
+
+// v5 fixtures: a straight pass due north through CENTER, every 30 s, with altitude/speed shaped by distance from center.
+const shapedPass = (day: number, shape: (distanceNm: number, after: boolean) => { altitudeFt: number; groundSpeedKt: number }, hourUtc = 15): PatternVisit => {
+  const positions: PatternPosition[] = [];
+  for (let i = 0; i <= 24; i += 1) {
+    const nm = -4 + (8 * i) / 24; // −4 NM … +4 NM
+    const { altitudeFt, groundSpeedKt } = shape(Math.abs(nm), nm > 0);
+    positions.push({ observedAt: new Date(Date.parse(t(day, 0, hourUtc)) + i * 30_000).toISOString(), latitude: CENTER.latitude + nm / NM_PER_DEG_LAT, longitude: CENTER.longitude, altitudeFt, groundSpeedKt, trackDeg: 0, verticalRateFpm: 0 });
+  }
+  return { enteredAt: t(day, 0, hourUtc), lastSeenInRadiusAt: t(day, 12, hourUtc), center: CENTER, positions };
+};
+const dipShape = (d: number) => (d <= 1.74 ? { altitudeFt: 2_000, groundSpeedKt: 75 } : { altitudeFt: 2_600, groundSpeedKt: 110 });
+
+describe("v5: dips within 2 mi of the watch center", () => {
+  it("detects an altitude and speed dip that recovers after passing", () => {
+    const d = dipEvidence(shapedPass(1, dipShape));
+    expect(d.assessable).toBe(true);
+    expect(d.altitudeDip && d.speedDip).toBe(true);
+    expect(Math.round(d.altitudeDropFt)).toBe(600);
+  });
+
+  it("treats a drop that does not recover as a descent, not a dip", () => {
+    const d = dipEvidence(shapedPass(1, (dist, after) => (after || dist <= 1.74 ? { altitudeFt: 1_800, groundSpeedKt: 80 } : { altitudeFt: 2_600, groundSpeedKt: 110 })));
+    expect(d.altitudeDip).toBe(false);
+    expect(d.speedDip).toBe(false);
+  });
+
+  it("ignores small wobbles below 300 ft and 15 kt", () => {
+    const d = dipEvidence(shapedPass(1, (dist) => (dist <= 1.74 ? { altitudeFt: 2_450, groundSpeedKt: 100 } : { altitudeFt: 2_600, groundSpeedKt: 110 })));
+    expect(d.altitudeDip || d.speedDip).toBe(false);
+  });
+
+  it("says Unknown when there are no positions on both sides of the 2 mi zone", () => {
+    expect(dipEvidence(straightPass(1, 1, 60)).assessable).toBe(false);
+  });
+
+  it("scores repeated dips and calls them unexplained even for a training fleet", () => {
+    const visits = [1, 2].map((day) => shapedPass(day, dipShape));
+    const plain = assessPattern(base({ visitCount: 2, visits }));
+    expect(plain.reasons.find((r) => r.code === "close_dip")?.weight).toBe(3);
+    const trainer = assessPattern(base({ callsign: "LTA661", registration: "N661L", visitCount: 2, visits }));
+    expect(trainer.fit).toBe("not_explained");
+    expect(trainer.tier).not.toBe("routine");
+  });
+});
+
+describe("v5: streaks and same-day repeats with the radius on your phone", () => {
+  const follow = (day: number, hourUtc = 15) => ({ enteredAt: t(day, 0, hourUtc), latitude: 40, longitude: -86, centerMode: "follow" as const });
+  const fixed = (day: number) => ({ enteredAt: t(day, 0), latitude: 40, longitude: -86, centerMode: "fixed" as const });
+
+  it("counts the longest run of consecutive local days", () => {
+    expect(longestDayStreak(["2026-10-01", "2026-10-02", "2026-10-03", "2026-10-05", "2026-10-06"])).toBe(3);
+    expect(longestDayStreak(["2026-10-30", "2026-10-31", "2026-11-01"])).toBe(3);
+  });
+
+  it("uses only follow-mode sightings when any are tagged", () => {
+    const { list, modeKnown } = phoneSightings([follow(1), fixed(2), follow(3)]);
+    expect(modeKnown).toBe(true);
+    expect(list).toHaveLength(2);
+  });
+
+  it("scores 5+ days in a row near your phone, more at 7+", () => {
+    const five = assessPattern(base({ visits: [straightPass(1, 6, 60)], sightings: [1, 2, 3, 4, 5].map((d) => follow(d)) }));
+    expect(five.reasons.find((r) => r.code === "consecutive_days")?.weight).toBe(2);
+    const seven = assessPattern(base({ visits: [straightPass(1, 6, 60)], sightings: [1, 2, 3, 4, 5, 6, 7].map((d) => follow(d)) }));
+    expect(seven.reasons.find((r) => r.code === "consecutive_days")?.weight).toBe(3);
+    const broken = assessPattern(base({ visits: [straightPass(1, 6, 60)], sightings: [1, 2, 4, 5, 7].map((d) => follow(d)) }));
+    expect(broken.reasons.some((r) => r.code === "consecutive_days")).toBe(false);
+  });
+
+  it("does not count days the radius was fixed toward a phone streak", () => {
+    const result = assessPattern(base({ visits: [straightPass(1, 6, 60)], sightings: [follow(1), follow(2), fixed(3), follow(4), follow(5)] }));
+    expect(result.reasons.some((r) => r.code === "consecutive_days")).toBe(false);
+  });
+
+  it("counts passes hours apart on the same day, not two pings minutes apart", () => {
+    expect(sameDayRepeatDays([t(1, 0, 14), t(1, 30, 14)]).days).toBe(0);
+    expect(sameDayRepeatDays([t(1, 0, 14), t(1, 0, 17), t(1, 0, 20)])).toEqual({ days: 1, maxEntriesInDay: 3 });
+    const result = assessPattern(base({ visits: [straightPass(1, 6, 60)], sightings: [follow(1, 14), follow(1, 18), follow(2, 14), follow(2, 19), follow(3, 13), follow(3, 17)] }));
+    expect(result.reasons.find((r) => r.code === "same_day_repeat")?.weight).toBe(2);
+  });
+
+  it("never applies streak or repeat scoring to scheduled airline flight numbers", () => {
+    const result = assessPattern(base({ callsign: "SWA461", visits: [straightPass(1, 3, 30, { altitudeFt: 36_000, groundSpeedKt: 450 })], sightings: [1, 2, 3, 4, 5, 6, 7].map((d) => follow(d)) }));
+    expect(result.reasons.some((r) => r.code === "consecutive_days" || r.code === "same_day_repeat")).toBe(false);
+    expect(result.tier).toBe("routine");
   });
 });
