@@ -2,7 +2,7 @@ import { z } from "zod";
 import { distanceNm } from "./geometry.js";
 import { netStatusSchema } from "./net.js";
 import { patternAssessmentSchema } from "./patterns.js";
-import { MAX_WATCH_RADIUS_MI, MIN_WATCH_RADIUS_MI, VISIT_GAP_MINUTES, WATCH_RADIUS_MI, milesToNm, nmToMiles } from "./units.js";
+import { MAX_WATCH_RADIUS_MI, MIN_WATCH_RADIUS_MI, VISIT_GAP_MINUTES, WATCH_RADIUS_MI, nmToMiles } from "./units.js";
 
 /**
  * "Netted aircraft": aircraft that were OBSERVED inside the watch radius, with a deterministic visit counter.
@@ -193,4 +193,3 @@ export const toNettedDto = (summary: NettedAircraftSummary, aircraftTypeCode: st
   })),
 });
 
-export const radiusMiToNm = milesToNm;

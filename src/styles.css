@@ -210,13 +210,15 @@ input[type="range"] { width: 100%; min-height: var(--tap); accent-color: var(--a
   background: rgba(11, 17, 23, 0.86); border-bottom: 1px solid var(--border);
   backdrop-filter: saturate(140%) blur(14px); -webkit-backdrop-filter: saturate(140%) blur(14px);
 }
-.brand { display: flex; align-items: center; gap: .6rem; min-width: 0; margin-right: auto; }
+.brand { display: flex; align-items: center; gap: .6rem; flex: none; margin-right: auto; }
 .brand svg { flex: none; }
 .brand-logo { width: 44px; height: 44px; flex: none; display: block; border-radius: 12px; object-fit: cover; box-shadow: 0 0 0 1px rgba(56, 189, 248, .2), 0 8px 24px rgba(0, 0, 0, .32); }
 .brand-copy { display: grid; line-height: 1.1; min-width: 0; }
-.brand-copy strong { font-size: 1.08rem; font-weight: 700; letter-spacing: -0.01em; }
+.brand-copy strong { font-size: 1.08rem; font-weight: 700; letter-spacing: -0.01em; white-space: nowrap; }
 .brand-copy span { color: var(--text-faint); font-size: .72rem; white-space: nowrap; }
-.topbar .status-pill { flex: none; }
+/* The title never shrinks; the status pill gives up room first and truncates its label (full text stays in the title attribute). */
+.topbar .status-pill { flex: 0 1 auto; min-width: 0; overflow: hidden; }
+.status-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar > .button { flex: none; padding: .5rem .9rem; }
 .account-chip { padding: 0 !important; width: var(--tap); border-radius: 50% !important; }
 .avatar { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--sky-soft); color: var(--sky); font-weight: 700; flex: none; }

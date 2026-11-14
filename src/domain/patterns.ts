@@ -668,13 +668,18 @@ export function assessPattern(input: PatternInput): PatternAssessment {
     });
   }
   if (anyDips.length > 0) {
-    const maxAlt = Math.round(Math.max(...anyDips.map((d) => d.altitudeDropFt)));
-    const maxSpd = Math.round(Math.max(...anyDips.map((d) => d.speedDropKt)));
+    // Report only the drops that were dips: "0 ft" next to a speed-only dip reads like a measurement it is not.
+    const altDips = anyDips.filter((d) => d.altitudeDip);
+    const spdDips = anyDips.filter((d) => d.speedDip);
+    const drops = [
+      altDips.length ? `${Math.round(Math.max(...altDips.map((d) => d.altitudeDropFt))).toLocaleString("en-US")} ft` : null,
+      spdDips.length ? `${Math.round(Math.max(...spdDips.map((d) => d.speedDropKt)))} kt` : null,
+    ].filter(Boolean).join(", ");
     const kind = bothDips.length > 0 ? "altitude and speed" : anyDips.some((d) => d.altitudeDip) ? "altitude" : "speed";
     const weight = bothDips.length >= 2 ? 3 : bothDips.length === 1 ? 2 : 1;
     reasons.push({
       code: "close_dip",
-      label: `Dropped ${kind} within 2 mi of your watch center, away from known fields, and recovered after, on ${anyDips.length} of ${plural(dipAssessable, "checkable pass", "checkable passes")} (largest drops ${maxAlt.toLocaleString("en-US")} ft, ${maxSpd} kt)${training ? "; trainers also practice slow flight and descents" : ""}`,
+      label: `Dropped ${kind} within 2 mi of your watch center, away from known fields, and recovered after, on ${anyDips.length} of ${plural(dipAssessable, "checkable pass", "checkable passes")} (largest ${drops.includes(",") ? "drops" : "drop"} ${drops})${training ? "; trainers also practice slow flight and descents" : ""}`,
       evidence: "Calculated",
       weight: training ? Math.max(1, weight - 1) : weight,
     });

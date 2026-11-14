@@ -209,14 +209,14 @@ export function historyRoutes(db: Queryable) {
       const rowLimit = 50_000;
       // Geography distances are spheroidal; the 1% pad keeps boundary aircraft in the candidate set and the
       // authoritative inside/outside decision is made by countRadiusVisits with the same haversine used everywhere else.
-      const { rows } = await db.query<{ icao24: string; registration: string | null; callsign: string | null; observation_registration: string | null; latitude: number; longitude: number; observed_at: Date; altitude_ft: number | null; ground_speed_kt: number | null; track_deg: number | null; vertical_rate_fpm: number | null }>(
+      const { rows } = await db.query<{ icao24: string; registration: string | null; callsign: string | null; observation_registration: string | null; latitude: number; longitude: number; observed_at: Date; altitude_ft: number | null; ground_speed_kt: number | null; track_deg: number | null; vertical_rate_fpm: number | null; on_ground: boolean | null }>(
         `with center as (select public.st_setsrid(public.st_makepoint($2::double precision, $1::double precision), 4326)::public.geography as point),
               hits as (
                 select distinct p.aircraft_id from public.aircraft_positions p, center
                  where p.observed_at >= $4::timestamptz and p.observed_at <= $5::timestamptz and public.st_dwithin(p.position, center.point, $3::double precision)
               )
          select a.icao24, a.registration, p.callsign, p.observation_registration, p.latitude, p.longitude, p.observed_at,
-                p.altitude_ft, p.ground_speed_kt, p.track_deg, p.vertical_rate_fpm
+                p.altitude_ft, p.ground_speed_kt, p.track_deg, p.vertical_rate_fpm, p.on_ground
            from public.aircraft_positions p
            join hits h on h.aircraft_id = p.aircraft_id
            join public.aircraft a on a.id = p.aircraft_id, center

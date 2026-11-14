@@ -9,6 +9,9 @@ export async function fetchAircraft(query: RadiusQuery, signal?: AbortSignal, ce
   url.searchParams.set("lat", String(safe.latitude));
   url.searchParams.set("lon", String(safe.longitude));
   url.searchParams.set("radiusNm", String(safe.radiusNm));
+  // Tags encounters recorded from the live view as follow-me or fixed (server: aircraft route `center`). Without it
+  // they were saved untagged and left out of the "radius on your phone" checks.
+  if (centerMode) url.searchParams.set("center", centerMode);
 
   // When signed in, send the Neon Auth JWT so users with the history grant contribute these real observations
   // to the flight recorder (and therefore to the Netted Aircraft log). Anonymous viewing still works.
