@@ -604,12 +604,16 @@ export function assessPattern(input: PatternInput): PatternAssessment {
     const weight = bothDips.length >= 2 ? 3 : bothDips.length === 1 ? 2 : 1;
     reasons.push({
       code: "close_dip",
-      label: `Dropped ${kind} within 2 mi of your watch center and recovered after, on ${plural(anyDips.length, "visit")} (largest drops ${maxAlt.toLocaleString("en-US")} ft, ${maxSpd} kt)${training ? "; trainers also practice slow flight and descents" : ""}`,
+      label: `Dropped ${kind} within 2 mi of your watch center and recovered after, on ${anyDips.length} of ${plural(dipAssessable, "checkable pass", "checkable passes")} (largest drops ${maxAlt.toLocaleString("en-US")} ft, ${maxSpd} kt)${training ? "; trainers also practice slow flight and descents" : ""}`,
       evidence: "Calculated",
       weight: training ? Math.max(1, weight - 1) : weight,
     });
-  } else if (away.length > 0 && dipAssessable === 0 && positioned.length > 0) {
-    reasons.push({ code: "dip_unknown", label: "Dips near you could not be checked: no recorded positions on both sides of the 2 mi zone", evidence: "Unknown", weight: 0 });
+  } else if (dipAssessable > 0) {
+    reasons.push({ code: "no_close_dip", label: `No altitude or speed dip within 2 mi of you on ${plural(dipAssessable, "checkable pass", "checkable passes")}`, evidence: "Calculated", weight: 0 });
+  }
+  const dipUnchecked = away.length - dipAssessable;
+  if (dipUnchecked > 0 && positioned.length > 0) {
+    reasons.push({ code: "dip_unknown", label: `Dips could not be checked on ${plural(dipUnchecked, "pass", "passes")}: no recorded positions on both sides of the 2 mi zone (usually app closed; the always-on net samples too sparsely)`, evidence: "Unknown", weight: 0 });
   }
 
   const hasRegistration = Boolean(input.registration?.trim() || input.registryRegistration?.trim());

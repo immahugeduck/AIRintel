@@ -14,7 +14,10 @@ Three signals, all measured against the radius **on your phone** (follow-mode si
   leaving it. Without recovery it is a descent (arrival), not a dip. One kind on any visit +1, both on one visit +2,
   both on 2+ visits +3 (trainers one less, minimum 1; trainers practice slow flight and descents). Both-kind dips on 2+
   visits are a `not_explained` context mismatch. Airport-area visits are not checked (approaches descend). Needs
-  positions on both sides of the 2 mi zone; otherwise `dip_unknown` (Unknown, 0). Altitude is barometric as reported
+  positions on both sides of the 2 mi zone. Every assessment reports coverage: `no_close_dip` (Calculated, 0) counts
+  passes checked without a dip, `dip_unknown` (Unknown, 0) counts passes that could not be checked. In practice
+  passes recorded with the app open (~20 s polling) are checkable; always-on net sweeps (1–2 positions) usually are
+  not. A traversal's before/after samples stop at the zone boundary, so a re-entry never counts as recovery. Altitude is barometric as reported
   (25 ft steps, uncorrected for local pressure), which is why the threshold is 300 ft.
 
 The v4 notes below still apply.

@@ -320,6 +320,14 @@ describe("v5: dips within 2 mi of the watch center", () => {
     expect(dipEvidence(straightPass(1, 1, 60)).assessable).toBe(false);
   });
 
+  it("reports how many passes were dip-checked, so 'no dip' is never confused with 'not checked'", () => {
+    const flat = shapedPass(1, () => ({ altitudeFt: 2_600, groundSpeedKt: 110 }));
+    const sparse = straightPass(2, 1, 60);
+    const result = assessPattern(base({ visitCount: 2, visits: [flat, sparse] }));
+    expect(result.reasons.find((r) => r.code === "no_close_dip")?.label).toMatch(/1 checkable pass/);
+    expect(result.reasons.find((r) => r.code === "dip_unknown")?.label).toMatch(/1 pass/);
+  });
+
   it("scores repeated dips and calls them unexplained even for a training fleet", () => {
     const visits = [1, 2].map((day) => shapedPass(day, dipShape));
     const plain = assessPattern(base({ visitCount: 2, visits }));
