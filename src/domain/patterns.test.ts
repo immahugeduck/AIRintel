@@ -453,3 +453,19 @@ describe("touch-and-go and near-field dips", () => {
     expect(result.reasons.some((r) => r.code === "near_field_dip" || r.code === "touch_and_go")).toBe(false);
   });
 });
+
+describe("close_dip wording", () => {
+  it("names only the measurements that dipped (no '0 ft' on a speed-only dip)", () => {
+    const visit: PatternVisit = (() => {
+      const positions: PatternPosition[] = [];
+      for (let i = 0; i <= 24; i += 1) {
+        const nm = -4 + (8 * i) / 24;
+        positions.push({ observedAt: new Date(Date.parse(t(1, 0)) + i * 30_000).toISOString(), latitude: CENTER.latitude + nm / NM_PER_DEG_LAT, longitude: CENTER.longitude, altitudeFt: 2_600, groundSpeedKt: Math.abs(nm) <= 1.74 ? 70 : 105, trackDeg: 0, verticalRateFpm: 0 });
+      }
+      return { enteredAt: t(1, 0), lastSeenInRadiusAt: t(1, 12), center: CENTER, positions };
+    })();
+    const label = assessPattern(base({ visits: [visit] })).reasons.find((r) => r.code === "close_dip")?.label ?? "";
+    expect(label).toMatch(/largest drop 35 kt\)/);
+    expect(label).not.toMatch(/0 ft/);
+  });
+});

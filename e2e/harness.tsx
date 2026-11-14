@@ -15,6 +15,7 @@ import { NettedDrawer } from "../src/components/NettedDrawer";
 import { NettedPanel } from "../src/components/NettedPanel";
 import { SelectedDock } from "../src/components/SelectedDock";
 import { deriveNetStatus } from "../src/domain/net";
+import { assessPattern, type PatternPosition, type PatternVisit } from "../src/domain/patterns";
 import type { NettedAircraft } from "../src/domain/netted";
 import type { NetControlState } from "../src/lib/use-net";
 import type { RadiusRow } from "../src/domain/radius-list";
@@ -35,6 +36,26 @@ const netted: NettedAircraft[] = [
   { icao24: "f00002", callsign: "TEST202", registration: null, aircraftTypeCode: null, visitCount: 1, firstSeenAt: minutesAgo(90), lastSeenAt: minutesAgo(80), closestApproachMi: 3.1, visits: [visit(90, 10, 3.1, 6)] },
   { icao24: "f00003", callsign: null, registration: null, aircraftTypeCode: null, visitCount: 2, firstSeenAt: minutesAgo(300), lastSeenAt: minutesAgo(45), closestApproachMi: 6.4, visits: [visit(45, 0, 6.4, 1), visit(300, 0, 6.9, 1)] },
 ];
+// Pattern fixtures (view=netted&patterns=1): the REAL scoring code run over SYNTHETIC test tracks, to check how
+// badges, context lines and "Why flagged" lists render. Not observations.
+const fixtureCenter = { latitude: 40, longitude: -86 };
+const fixturePass = (daysAgo: number, lowFt: number, highFt: number): PatternVisit => {
+  const start = Date.now() - daysAgo * 86_400_000;
+  const positions: PatternPosition[] = [];
+  for (let i = 0; i <= 24; i += 1) {
+    const nm = -4 + (8 * i) / 24;
+    const d = Math.abs(nm);
+    positions.push({ observedAt: new Date(start + i * 30_000).toISOString(), latitude: fixtureCenter.latitude + nm / 60, longitude: fixtureCenter.longitude, altitudeFt: d <= 0.8 ? lowFt : d <= 1.74 ? (lowFt + highFt) / 2 : highFt, groundSpeedKt: d <= 1.74 ? 70 : 105, trackDeg: 0, verticalRateFpm: 0, onGround: false });
+  }
+  return { enteredAt: positions[0]!.observedAt, lastSeenInRadiusAt: positions[24]!.observedAt, center: fixtureCenter, positions };
+};
+const fixtureSightings = (days: number) => Array.from({ length: days }, (_, d) => ({ enteredAt: new Date(Date.now() - d * 86_400_000).toISOString(), ...fixtureCenter, centerMode: "follow" as const }));
+const patternFixtures = [
+  assessPattern({ icao24: "f00001", callsign: "TEST101", registration: "N0TEST1", aircraftTypeCode: "TST1", visitCount: 7, visits: [fixturePass(1, 1_400, 2_600), fixturePass(2, 1_400, 2_600)], sightings: fixtureSightings(6) }),
+  assessPattern({ icao24: "f00002", callsign: "LTA661", registration: "N661L", aircraftTypeCode: "TST2", visitCount: 3, visits: [fixturePass(1, 2_600, 2_600)], sightings: fixtureSightings(1) }),
+  assessPattern({ icao24: "f00003", callsign: null, registration: null, aircraftTypeCode: null, visitCount: 2, visits: [], sightings: [] }),
+];
+
 const netCases = {
   active: { enabled: true, updatedAt: minutesAgo(600), lastSuccessAt: minutesAgo(2), lastPolledAt: minutesAgo(2), lastPollStatus: "ok" },
   stale: { enabled: true, updatedAt: minutesAgo(600), lastSuccessAt: minutesAgo(47), lastPolledAt: minutesAgo(1), lastPollStatus: "provider_error" },
@@ -47,7 +68,8 @@ function Harness() {
   const view = (params.get("view") ?? "aircraft") as "aircraft" | "netted" | "more";
   const netCase = (params.get("net") ?? "active") as keyof typeof netCases;
   const netStatus = deriveNetStatus(netCases[netCase], new Date());
-  const nettedState = { kind: "ready", source: "recorded", aircraft: params.get("empty") === "1" ? [] : netted, hours: 24, truncated: false, net: netStatus } as const;
+  const withPatterns = params.get("patterns") === "1" ? netted.map((item, i) => ({ ...item, pattern: patternFixtures[i] ?? null })) : netted;
+  const nettedState = { kind: "ready", source: "recorded", aircraft: params.get("empty") === "1" ? [] : withPatterns, hours: 24, truncated: false, net: netStatus } as const;
   const [drawerOpen, setDrawerOpen] = useState(params.get("drawer") === "1");
   const controlState: NetControlState = { kind: "ready", data: { watchArea: netCase === "paused" ? null : { latitude: 39.7684, longitude: -86.1581, radiusMi: 7, enabled: true, createdAt: minutesAgo(600), updatedAt: minutesAgo(600) }, net: netStatus, receivedAt: new Date().toISOString() } };
   const empty = params.get("empty") === "1";

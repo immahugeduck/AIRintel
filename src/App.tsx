@@ -170,7 +170,7 @@ export default function App() {
     <div className="app-shell" data-view={view}>
       <header className="topbar">
         <div className="brand"><img className="brand-logo" src="/airintel-logo.svg" alt="" aria-hidden="true" /><div className="brand-copy"><strong>AIRIntel</strong><span>Air Route Intelligence</span></div></div>
-        <span className={`status-pill is-${feedState.tone}`} role="status"><span className="pulse" aria-hidden="true" />{feedState.label}</span>
+        <span className={`status-pill is-${feedState.tone}`} role="status" title={feedState.label}><span className="pulse" aria-hidden="true" /><span className="status-label">{feedState.label}</span></span>
         <button ref={drawerTriggerRef} type="button" className="icon-button log-button" onClick={openDrawer} aria-haspopup="dialog" aria-expanded={drawerOpen} aria-label={`Netted log${entries24h > 0 ? `, ${entries24h} ${entries24h === 1 ? "entry" : "entries"} in the last 24 hours` : ""}`}>
           <LogIcon />
           {entries24h > 0 && <span className="log-badge mono" aria-hidden="true">{entries24h > 99 ? "99+" : entries24h}</span>}
