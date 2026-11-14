@@ -387,7 +387,7 @@ export function sameDayRepeatDays(entries: readonly string[], timeZone: string =
   return { days, maxEntriesInDay };
 }
 
-export type DipEvidence = { assessable: boolean; altitudeDropFt: number; speedDropKt: number; altitudeDip: boolean; speedDip: boolean };
+export type DipEvidence = { assessable: boolean; altitudeChecked: boolean; speedChecked: boolean; altitudeDropFt: number; speedDropKt: number; altitudeDip: boolean; speedDip: boolean };
 
 /**
  * Dip near the watch center (Calculated): compares the last positions before entering 2 mi of the center, the lowest
@@ -396,7 +396,7 @@ export type DipEvidence = { assessable: boolean; altitudeDropFt: number; speedDr
  */
 export function dipEvidence(visit: PatternVisit): DipEvidence {
   const T = PATTERN_THRESHOLDS;
-  const none: DipEvidence = { assessable: false, altitudeDropFt: 0, speedDropKt: 0, altitudeDip: false, speedDip: false };
+  const none: DipEvidence = { assessable: false, altitudeChecked: false, speedChecked: false, altitudeDropFt: 0, speedDropKt: 0, altitudeDip: false, speedDip: false };
   if (!visit.center) return none;
   const c = visit.center;
   const points = visit.positions
@@ -431,6 +431,8 @@ export function dipEvidence(visit: PatternVisit): DipEvidence {
     const alt = measure("altitudeFt", T.dipAltitudeFt);
     const spd = measure("groundSpeedKt", T.dipSpeedKt);
     result.assessable = result.assessable || alt.known || spd.known;
+    result.altitudeChecked = result.altitudeChecked || alt.known;
+    result.speedChecked = result.speedChecked || spd.known;
     result.altitudeDropFt = Math.max(result.altitudeDropFt, alt.drop);
     result.speedDropKt = Math.max(result.speedDropKt, spd.drop);
     result.altitudeDip = result.altitudeDip || alt.dip;
@@ -609,11 +611,22 @@ export function assessPattern(input: PatternInput): PatternAssessment {
       weight: training ? Math.max(1, weight - 1) : weight,
     });
   } else if (dipAssessable > 0) {
-    reasons.push({ code: "no_close_dip", label: `No altitude or speed dip within 2 mi of you on ${plural(dipAssessable, "checkable pass", "checkable passes")}`, evidence: "Calculated", weight: 0 });
+    // Each metric is reported only for the passes where it was actually checked.
+    const altChecked = dips.filter((d) => d.altitudeChecked).length;
+    const spdChecked = dips.filter((d) => d.speedChecked).length;
+    const parts = [altChecked > 0 ? `no altitude dip on ${plural(altChecked, "checked pass", "checked passes")}` : null, spdChecked > 0 ? `no speed dip on ${plural(spdChecked, "checked pass", "checked passes")}` : null].filter(Boolean);
+    reasons.push({ code: "no_close_dip", label: `Within 2 mi of you: ${parts.join("; ")}`, evidence: "Calculated", weight: 0 });
   }
-  const dipUnchecked = away.length - dipAssessable;
-  if (dipUnchecked > 0 && positioned.length > 0) {
-    reasons.push({ code: "dip_unknown", label: `Dips could not be checked on ${plural(dipUnchecked, "pass", "passes")}: no recorded positions on both sides of the 2 mi zone (usually app closed; the always-on net samples too sparsely)`, evidence: "Unknown", weight: 0 });
+  if (positioned.length > 0 && away.length > 0) {
+    const noPositions = dips.filter((d) => !d.assessable).length;
+    const altMissing = dips.filter((d) => d.assessable && !d.altitudeChecked).length;
+    const spdMissing = dips.filter((d) => d.assessable && !d.speedChecked).length;
+    const gaps = [
+      noPositions > 0 ? `${plural(noPositions, "pass", "passes")} had no recorded positions on both sides of the 2 mi zone (usually app closed; the always-on net samples too sparsely)` : null,
+      altMissing > 0 ? `altitude was not reported on ${plural(altMissing, "pass", "passes")}` : null,
+      spdMissing > 0 ? `ground speed was not reported on ${plural(spdMissing, "pass", "passes")}` : null,
+    ].filter(Boolean);
+    if (gaps.length > 0) reasons.push({ code: "dip_unknown", label: `Dips not fully checked: ${gaps.join("; ")}`, evidence: "Unknown", weight: 0 });
   }
 
   const hasRegistration = Boolean(input.registration?.trim() || input.registryRegistration?.trim());
