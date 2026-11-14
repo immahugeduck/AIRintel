@@ -22,10 +22,10 @@ export type PatternRun = { assessments: Map<string, PatternAssessment>; status: 
 type PositionRow = {
   encounter_id: string; icao24: string; entered_at: Date; last_seen_in_radius_at: Date; center_latitude: number; center_longitude: number;
   total: number | string | null; observed_at: Date | null; latitude: number | null; longitude: number | null; altitude_ft: number | null; ground_speed_kt: number | null;
-  track_deg: number | null; vertical_rate_fpm: number | null;
+  track_deg: number | null; vertical_rate_fpm: number | null; on_ground: boolean | null;
 };
 
-const toPosition = (row: { observed_at: Date; latitude: number; longitude: number; altitude_ft: number | null; ground_speed_kt: number | null; track_deg: number | null; vertical_rate_fpm: number | null }): PatternPosition => ({
+const toPosition = (row: { observed_at: Date; latitude: number; longitude: number; altitude_ft: number | null; ground_speed_kt: number | null; track_deg: number | null; vertical_rate_fpm: number | null; on_ground?: boolean | null }): PatternPosition => ({
   observedAt: iso(row.observed_at)!,
   latitude: row.latitude,
   longitude: row.longitude,
@@ -33,6 +33,7 @@ const toPosition = (row: { observed_at: Date; latitude: number; longitude: numbe
   groundSpeedKt: row.ground_speed_kt,
   trackDeg: row.track_deg,
   verticalRateFpm: row.vertical_rate_fpm,
+  onGround: row.on_ground ?? null,
 });
 
 const chunks = <T>(items: readonly T[], size: number): T[][] => {
@@ -123,12 +124,12 @@ export async function assessLogPatterns(
               where e.user_id = $1::uuid and e.icao24 = any($2::text[])
            )
            select r.id as encounter_id, r.icao24, r.entered_at, r.last_seen_in_radius_at, r.center_latitude, r.center_longitude,
-                  p.total, p.observed_at, p.latitude, p.longitude, p.altitude_ft, p.ground_speed_kt, p.track_deg, p.vertical_rate_fpm
+                  p.total, p.observed_at, p.latitude, p.longitude, p.altitude_ft, p.ground_speed_kt, p.track_deg, p.vertical_rate_fpm, p.on_ground
              from ranked r
              left join public.aircraft a on a.icao24 = r.icao24
              left join lateral (
                select q.* from (
-                 select pp.observed_at, pp.latitude, pp.longitude, pp.altitude_ft, pp.ground_speed_kt, pp.track_deg, pp.vertical_rate_fpm,
+                 select pp.observed_at, pp.latitude, pp.longitude, pp.altitude_ft, pp.ground_speed_kt, pp.track_deg, pp.vertical_rate_fpm, pp.on_ground,
                         row_number() over (order by pp.observed_at) as n, count(*) over () as total
                    from public.aircraft_positions pp
                   where pp.aircraft_id = a.id and pp.observed_at >= r.entered_at and pp.observed_at <= r.last_seen_in_radius_at

@@ -24,15 +24,21 @@ describe("aggregateSightings", () => {
 
 describe("controlTooClose", () => {
   const watch = { latitude: 40, longitude: -86, radiusMi: 7 };
-  it("rejects a control center within 10 mi of the watch center", () => {
+  it("rejects a control circle that overlaps the watch circle", () => {
     expect(controlTooClose({ latitude: 40.05, longitude: -86, radiusMi: 2 }, [watch])?.distanceMi).toBeCloseTo(3.45, 1);
     expect(controlTooClose({ latitude: 40, longitude: -86, radiusMi: 2 }, [])).toBeNull();
   });
   it("rejects a control circle whose radius overlaps the watch circle even when the centers are 10+ mi apart", () => {
     // ~20.7 mi apart: a 7 mi watch circle and a 15 mi control circle overlap.
     const result = controlTooClose({ latitude: 40.3, longitude: -86, radiusMi: 15 }, [watch]);
-    expect(result?.requiredMi).toBe(23);
+    expect(result?.requiredMi).toBe(22.5);
     expect(controlTooClose({ latitude: 40.3, longitude: -86, radiusMi: 7 }, [watch])).toBeNull();
+  });
+  it("allows a small control close by when the circles do not overlap (no more 10 mi floor)", () => {
+    // ~9.7 mi from a 7 mi watch circle: a 2 mi control needs 7 + 2 + 0.5 = 9.5 mi.
+    expect(controlTooClose({ latitude: 40.14, longitude: -86, radiusMi: 2 }, [watch])).toBeNull();
+    // Any control center closer than the 3 mi floor is still refused.
+    expect(controlTooClose({ latitude: 40.02, longitude: -86, radiusMi: 1 }, [{ latitude: 40, longitude: -86, radiusMi: 1 }])?.requiredMi).toBe(3);
   });
   it("also checks places you were netted at with follow me (recent encounter centers)", () => {
     const visited = { latitude: 41, longitude: -86, radiusMi: 7 };

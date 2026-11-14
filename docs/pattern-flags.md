@@ -20,6 +20,19 @@ Three signals, all measured against the radius **on your phone** (follow-mode si
   not. A traversal's before/after samples stop at the zone boundary, so a re-entry never counts as recovery. Altitude is barometric as reported
   (25 ft steps, uncorrected for local pressure), which is why the threshold is 300 ft.
 
+**Touch-and-go and near-field dips (2026-11-14).** A dip's low point is classified (`dipContext`):
+the provider's recorded on-ground flag (`aircraft_positions.on_ground`) during the traversal, or within 100 ft of a known field's elevation within 1 NM →
+`touch_and_go` (0, not scored). Within 1 NM of a field but higher → `near_field_dip`, 0.5 per pass, max 1.5 (a low pass
+or go-around looks like a dip). Elsewhere → full `close_dip`. Fields = `KNOWN_AIRSTRIPS` (private strips; empty until
+entries are verified against FAA data) + `KNOWN_AIRPORTS`. Passes over public airports are usually airport-area visits
+and not dip-checked at all, so in practice the 0.5 rule applies to private strips. GPS altitude is height above the
+WGS-84 ellipsoid (roughly 50–115 ft below sea-level altitude in the US, and some transponders correct it), so "within
+100 ft" can include low passes up to ~200 ft above the field.
+
+**Control circles (2026-11-14).** Floor lowered from 10 mi to 3 mi and edge margin from 1 mi to 0.5 mi; circles still
+may not overlap the watch circle or a regular place. Follow-me places now block a control only if used on 2+ local days
+in the last 30 (driving through once no longer counts).
+
 The v4 notes below still apply.
 
 ## v4 notes (pattern-flags-v4)
@@ -74,8 +87,8 @@ fly turns around a point on purpose; medical, news, survey, pipeline and police 
    `ladd` +1), FAA owner type (`government_owner` +2 for government registrants, but not universities/colleges/
    schools), rotorcraft (`rotorcraft_loiter` +1, ADS-B category A7 or FAA aircraft type 6, only when it also circles or
    loiters), identity gaps (+1). The FAA model is shown as the type when no ICAO type code was broadcast.
-5. **Control comparison.** Control circles must not overlap your watch circle or any watch center used in the last 30
-   days (follow me history): center distance ≥ max(10 mi, both radii + 1 mi). Sightings are counted per local day
+5. **Control comparison.** Control circles must not overlap your watch circle or any watch center used on 2+ local days in
+   the last 30 (follow me history): center distance ≥ max(3 mi, both radii + 0.5 mi). Sightings are counted per local day
    (America/Indianapolis). `control_common` −2, `control_absent` +1, as in v2.
 
 Plus recurrence (+2, ≥ 5 entries on ≥ 3 local days; 0 for routine aircraft). Days are counted in

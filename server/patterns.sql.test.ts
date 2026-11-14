@@ -48,7 +48,7 @@ beforeAll(async () => {
   pg = await PGlite.create();
   await pg.exec(`create schema airintel_private;
     create table public.aircraft (id uuid primary key, icao24 text unique, registration text);
-    create table public.aircraft_positions (id bigint primary key, aircraft_id uuid references public.aircraft(id), observed_at timestamptz, latitude double precision, longitude double precision, altitude_ft double precision, ground_speed_kt double precision, track_deg double precision, vertical_rate_fpm double precision);
+    create table public.aircraft_positions (id bigint primary key, aircraft_id uuid references public.aircraft(id), observed_at timestamptz, latitude double precision, longitude double precision, altitude_ft double precision, ground_speed_kt double precision, track_deg double precision, vertical_rate_fpm double precision, on_ground boolean);
     create table airintel_private.raw_observations (id bigint primary key, position_id bigint unique references public.aircraft_positions(id), payload jsonb not null);
     create table airintel_private.net_watch_areas (user_id uuid primary key);`);
   await pg.exec(readFileSync(new URL("../db/migrations/0006_account_encounters.sql", import.meta.url), "utf8"));

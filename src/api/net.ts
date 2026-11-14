@@ -1,4 +1,4 @@
-import { controlAreaInputSchema, controlAreasResponseSchema, watchAreaInputSchema, watchAreaResponseSchema, type ControlAreaInput, type WatchAreaInput } from "../domain/net";
+import { MIN_CONTROL_SEPARATION_MI, controlAreaInputSchema, controlAreasResponseSchema, watchAreaInputSchema, watchAreaResponseSchema, type ControlAreaInput, type WatchAreaInput } from "../domain/net";
 import { historyApiEndpoint, resolveApiUrl } from "../lib/api-url";
 import { getAccessToken, getAuthClient } from "../lib/auth";
 import { AccessDeniedError, AuthenticationRequiredError, ProviderNotConfiguredError } from "../providers/contracts";
@@ -43,8 +43,8 @@ export const saveWatchArea = (input: WatchAreaInput) => request("PUT", watchArea
 
 /** Raised when a control circle is too close to the user's own watch center to be a comparison. */
 export class ControlTooCloseError extends Error {
-  constructor(readonly distanceMi: number, readonly requiredMi: number = 10) {
-    super(`A control circle must not overlap places you are netted at: it needs to be at least ${requiredMi} mi from your watch circle and from places you recently used with follow me (this one is ${distanceMi} mi away). Pick a place you do not go, or use a smaller radius.`);
+  constructor(readonly distanceMi: number, readonly requiredMi: number = MIN_CONTROL_SEPARATION_MI) {
+    super(`A control circle must not overlap places you are netted at: it needs to be at least ${requiredMi} mi from your watch circle and from places you regularly use with follow me (2+ days in the last 30; this one is ${distanceMi} mi away). Pick a place you do not go, or use a smaller radius.`);
     this.name = "ControlTooCloseError";
   }
 }
@@ -68,7 +68,7 @@ async function controlRequest(method: "GET" | "PUT" | "DELETE", options: { body?
     if (response.status === 403 && payload?.error === "history_access_denied") throw new AccessDeniedError("history");
     if (response.status === 503 && payload?.error === "database_not_configured") throw new ProviderNotConfiguredError();
     if (response.status === 503 && payload?.error === "net_not_migrated") throw new NetNotMigratedError();
-    if (response.status === 422 && payload?.error === "control_too_close") throw new ControlTooCloseError(payload.distanceMi ?? 0, payload.requiredMi ?? 10);
+    if (response.status === 422 && payload?.error === "control_too_close") throw new ControlTooCloseError(payload.distanceMi ?? 0, payload.requiredMi ?? MIN_CONTROL_SEPARATION_MI);
     if (response.status === 429) throw new Error("Too many requests. Wait a moment and try again.");
     throw new Error(`The control circles could not be updated (server answered ${response.status}).`);
   }
