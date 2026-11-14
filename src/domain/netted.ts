@@ -146,7 +146,7 @@ export const nettedAircraftSchema = z.object({
   closestApproachMi: z.number().finite().nonnegative(),
   /** Individual entries, newest first (at most MAX_VISITS_PER_AIRCRAFT). Older servers omit this; treated as empty. */
   visits: z.array(radiusVisitSchema).default([]),
-  /** Review-priority flags (`pattern-flags-v4`, src/domain/patterns.ts). Calculated behavior only, never intent. */
+  /** Review-priority flags (`pattern-flags-v5`, src/domain/patterns.ts). Calculated behavior only, never intent. */
   pattern: patternAssessmentSchema.nullish(),
 });
 export type NettedAircraft = z.infer<typeof nettedAircraftSchema>;

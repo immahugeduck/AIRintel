@@ -1,4 +1,25 @@
-# Pattern flags (`pattern-flags-v4`)
+# Pattern flags (`pattern-flags-v5`)
+
+## v5 additions (2026-11-14)
+
+Three signals, all measured against the radius **on your phone** (follow-mode sightings; when no sighting is tagged
+`follow`, all sightings are used and the reason says the mode was not recorded):
+
+- **`consecutive_days`** (Observed): seen on 5+ consecutive local days: +2, 7+: +3. Training fleets, charter and
+  mostly-airport traffic: +1. Scheduled flight numbers: not scored.
+- **`same_day_repeat`** (Observed): came back 2+ hours after its previous pass on the same local day. On 1–2 days +1,
+  on 3+ days +2 (training/charter/airport: 0, or +1 at 3+ days). Passes minutes apart are one pass.
+- **`close_dip`** (Calculated): inside 2 mi (1.74 NM) of the watch center, altitude fell ≥ 300 ft and/or ground speed
+  fell ≥ 15 kt versus the last positions before entering that zone, **and recovered at least half the drop** after
+  leaving it. Without recovery it is a descent (arrival), not a dip. One kind on any visit +1, both on one visit +2,
+  both on 2+ visits +3 (trainers one less, minimum 1; trainers practice slow flight and descents). Both-kind dips on 2+
+  visits are a `not_explained` context mismatch. Airport-area visits are not checked (approaches descend). Needs
+  positions on both sides of the 2 mi zone; otherwise `dip_unknown` (Unknown, 0). Altitude is barometric as reported
+  (25 ft steps, uncorrected for local pressure), which is why the threshold is 300 ft.
+
+The v4 notes below still apply.
+
+## v4 notes (pattern-flags-v4)
 
 ## v4 in one paragraph (2026-11-14)
 
