@@ -196,6 +196,7 @@ export async function assessLogPatterns(
 export type WindowPositionRow = {
   icao24: string; latitude: number; longitude: number; observed_at: Date;
   altitude_ft: number | null; ground_speed_kt: number | null; track_deg: number | null; vertical_rate_fpm: number | null;
+  on_ground?: boolean | null;
 };
 
 /**

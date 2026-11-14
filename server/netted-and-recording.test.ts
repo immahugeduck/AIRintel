@@ -81,6 +81,8 @@ describe("GET /history?action=netted", () => {
     expect(spatialParams[0]).toBe(40);
     expect(spatialParams[1]).toBe(-86);
     expect(spatialParams[2] as number).toBeCloseTo(7 * 1609.344 * 1.01, 3);
+    // Pattern scoring in this window needs the recorded on-ground state (touch-and-go vs dip; Codex review, PR #35).
+    expect(db.sql.find((text) => text.includes("with center"))).toContain("p.on_ground");
   });
 });
 
