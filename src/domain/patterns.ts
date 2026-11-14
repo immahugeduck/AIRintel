@@ -387,7 +387,7 @@ export function sameDayRepeatDays(entries: readonly string[], timeZone: string =
   return { days, maxEntriesInDay };
 }
 
-export type DipEvidence = { assessable: boolean; altitudeDropFt: number; speedDropKt: number; altitudeDip: boolean; speedDip: boolean };
+export type DipEvidence = { assessable: boolean; altitudeChecked: boolean; speedChecked: boolean; altitudeDropFt: number; speedDropKt: number; altitudeDip: boolean; speedDip: boolean };
 
 /**
  * Dip near the watch center (Calculated): compares the last positions before entering 2 mi of the center, the lowest
@@ -396,33 +396,49 @@ export type DipEvidence = { assessable: boolean; altitudeDropFt: number; speedDr
  */
 export function dipEvidence(visit: PatternVisit): DipEvidence {
   const T = PATTERN_THRESHOLDS;
-  const none: DipEvidence = { assessable: false, altitudeDropFt: 0, speedDropKt: 0, altitudeDip: false, speedDip: false };
+  const none: DipEvidence = { assessable: false, altitudeChecked: false, speedChecked: false, altitudeDropFt: 0, speedDropKt: 0, altitudeDip: false, speedDip: false };
   if (!visit.center) return none;
   const c = visit.center;
   const points = visit.positions
     .filter((p) => Number.isFinite(Date.parse(p.observedAt)))
     .sort((a, b) => Date.parse(a.observedAt) - Date.parse(b.observedAt))
     .map((p) => ({ p, inside: distanceNm(c.latitude, c.longitude, p.latitude, p.longitude) <= T.dipRadiusNm }));
-  const first = points.findIndex((x) => x.inside);
-  if (first <= 0) return none;
-  let last = first;
-  while (last + 1 < points.length && points[last + 1]!.inside) last += 1;
-  if (last + 1 >= points.length) return none;
-  const before = points.slice(Math.max(0, first - 3), first).map((x) => x.p);
-  const inside = points.slice(first, last + 1).map((x) => x.p);
-  const after = points.slice(last + 1, last + 4).map((x) => x.p);
-  const measure = (key: "altitudeFt" | "groundSpeedKt", threshold: number) => {
-    const b = median(before.flatMap((p) => (p[key] === null ? [] : [p[key]!])));
-    const lows = inside.flatMap((p) => (p[key] === null ? [] : [p[key]!]));
-    const a = median(after.flatMap((p) => (p[key] === null ? [] : [p[key]!])));
-    if (b === null || a === null || lows.length === 0) return { drop: 0, dip: false, known: false };
-    const low = Math.min(...lows);
-    const drop = b - low;
-    return { drop, dip: drop >= threshold && a - low >= drop * T.dipRecoveryFraction, known: true };
-  };
-  const alt = measure("altitudeFt", T.dipAltitudeFt);
-  const spd = measure("groundSpeedKt", T.dipSpeedKt);
-  return { assessable: alt.known || spd.known, altitudeDropFt: alt.drop, speedDropKt: spd.drop, altitudeDip: alt.dip, speedDip: spd.dip };
+  // Each traversal of the 2 mi zone is judged on its own: "before" and "after" samples stop at the zone boundary, so a
+  // second pass through the zone never counts as recovery from the first.
+  const result: DipEvidence = { ...none };
+  let i = 0;
+  while (i < points.length) {
+    if (!points[i]!.inside) { i += 1; continue; }
+    const first = i;
+    let last = first;
+    while (last + 1 < points.length && points[last + 1]!.inside) last += 1;
+    i = last + 1;
+    if (first === 0 || last + 1 >= points.length) continue;
+    const before: PatternPosition[] = [];
+    for (let j = first - 1; j >= 0 && !points[j]!.inside && before.length < 3; j -= 1) before.unshift(points[j]!.p);
+    const after: PatternPosition[] = [];
+    for (let j = last + 1; j < points.length && !points[j]!.inside && after.length < 3; j += 1) after.push(points[j]!.p);
+    const inside = points.slice(first, last + 1).map((x) => x.p);
+    const measure = (key: "altitudeFt" | "groundSpeedKt", threshold: number) => {
+      const b = median(before.flatMap((p) => (p[key] === null ? [] : [p[key]!])));
+      const lows = inside.flatMap((p) => (p[key] === null ? [] : [p[key]!]));
+      const a = median(after.flatMap((p) => (p[key] === null ? [] : [p[key]!])));
+      if (b === null || a === null || lows.length === 0) return { drop: 0, dip: false, known: false };
+      const low = Math.min(...lows);
+      const drop = b - low;
+      return { drop, dip: drop >= threshold && a - low >= drop * T.dipRecoveryFraction, known: true };
+    };
+    const alt = measure("altitudeFt", T.dipAltitudeFt);
+    const spd = measure("groundSpeedKt", T.dipSpeedKt);
+    result.assessable = result.assessable || alt.known || spd.known;
+    result.altitudeChecked = result.altitudeChecked || alt.known;
+    result.speedChecked = result.speedChecked || spd.known;
+    result.altitudeDropFt = Math.max(result.altitudeDropFt, alt.drop);
+    result.speedDropKt = Math.max(result.speedDropKt, spd.drop);
+    result.altitudeDip = result.altitudeDip || alt.dip;
+    result.speedDip = result.speedDip || spd.dip;
+  }
+  return result;
 }
 
 /** Known airport whose traffic area explains a visit (centroid of its positions near the field, at pattern height). */
@@ -590,12 +606,27 @@ export function assessPattern(input: PatternInput): PatternAssessment {
     const weight = bothDips.length >= 2 ? 3 : bothDips.length === 1 ? 2 : 1;
     reasons.push({
       code: "close_dip",
-      label: `Dropped ${kind} within 2 mi of your watch center and recovered after, on ${plural(anyDips.length, "visit")} (largest drops ${maxAlt.toLocaleString("en-US")} ft, ${maxSpd} kt)${training ? "; trainers also practice slow flight and descents" : ""}`,
+      label: `Dropped ${kind} within 2 mi of your watch center and recovered after, on ${anyDips.length} of ${plural(dipAssessable, "checkable pass", "checkable passes")} (largest drops ${maxAlt.toLocaleString("en-US")} ft, ${maxSpd} kt)${training ? "; trainers also practice slow flight and descents" : ""}`,
       evidence: "Calculated",
       weight: training ? Math.max(1, weight - 1) : weight,
     });
-  } else if (away.length > 0 && dipAssessable === 0 && positioned.length > 0) {
-    reasons.push({ code: "dip_unknown", label: "Dips near you could not be checked: no recorded positions on both sides of the 2 mi zone", evidence: "Unknown", weight: 0 });
+  } else if (dipAssessable > 0) {
+    // Each metric is reported only for the passes where it was actually checked.
+    const altChecked = dips.filter((d) => d.altitudeChecked).length;
+    const spdChecked = dips.filter((d) => d.speedChecked).length;
+    const parts = [altChecked > 0 ? `no altitude dip on ${plural(altChecked, "checked pass", "checked passes")}` : null, spdChecked > 0 ? `no speed dip on ${plural(spdChecked, "checked pass", "checked passes")}` : null].filter(Boolean);
+    reasons.push({ code: "no_close_dip", label: `Within 2 mi of you: ${parts.join("; ")}`, evidence: "Calculated", weight: 0 });
+  }
+  if (positioned.length > 0 && away.length > 0) {
+    const noPositions = dips.filter((d) => !d.assessable).length;
+    const altMissing = dips.filter((d) => d.assessable && !d.altitudeChecked).length;
+    const spdMissing = dips.filter((d) => d.assessable && !d.speedChecked).length;
+    const gaps = [
+      noPositions > 0 ? `${plural(noPositions, "pass", "passes")} had no recorded positions on both sides of the 2 mi zone (usually app closed; the always-on net samples too sparsely)` : null,
+      altMissing > 0 ? `altitude was not reported on ${plural(altMissing, "pass", "passes")}` : null,
+      spdMissing > 0 ? `ground speed was not reported on ${plural(spdMissing, "pass", "passes")}` : null,
+    ].filter(Boolean);
+    if (gaps.length > 0) reasons.push({ code: "dip_unknown", label: `Dips not fully checked: ${gaps.join("; ")}`, evidence: "Unknown", weight: 0 });
   }
 
   const hasRegistration = Boolean(input.registration?.trim() || input.registryRegistration?.trim());

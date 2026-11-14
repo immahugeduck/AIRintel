@@ -307,8 +307,37 @@ describe("v5: dips within 2 mi of the watch center", () => {
     expect(d.altitudeDip || d.speedDip).toBe(false);
   });
 
+  it("does not count a second pass through the zone as recovery from the first (Codex review, PR #32)", () => {
+    // In, out low for one sample, back in high, then out low: no position outside the zone ever recovered.
+    const alt = [2_600, 2_600, 2_000, 2_000, 2_000, 3_000, 3_000, 2_000];
+    const dist = [3, 2.5, 1.5, 1, 2.2, 1.2, 1.0, 2.5];
+    const positions: PatternPosition[] = alt.map((a, i) => ({ observedAt: t(1, i), latitude: CENTER.latitude + dist[i]! / NM_PER_DEG_LAT, longitude: CENTER.longitude, altitudeFt: a, groundSpeedKt: 100, trackDeg: 0, verticalRateFpm: 0 }));
+    const d = dipEvidence({ enteredAt: t(1, 0), lastSeenInRadiusAt: t(1, 7), center: CENTER, positions });
+    expect(d.altitudeDip).toBe(false);
+  });
+
   it("says Unknown when there are no positions on both sides of the 2 mi zone", () => {
     expect(dipEvidence(straightPass(1, 1, 60)).assessable).toBe(false);
+  });
+
+  it("reports how many passes were dip-checked, so 'no dip' is never confused with 'not checked'", () => {
+    const flat = shapedPass(1, () => ({ altitudeFt: 2_600, groundSpeedKt: 110 }));
+    const sparse = straightPass(2, 1, 60);
+    const result = assessPattern(base({ visitCount: 2, visits: [flat, sparse] }));
+    expect(result.reasons.find((r) => r.code === "no_close_dip")?.label).toMatch(/no altitude dip on 1 checked pass; no speed dip on 1 checked pass/);
+    expect(result.reasons.find((r) => r.code === "dip_unknown")?.label).toMatch(/1 pass had no recorded positions/);
+  });
+
+  it("never claims 'no altitude dip' when altitude was not reported (Codex review, PR #33)", () => {
+    const noAlt = shapedPass(1, () => ({ altitudeFt: 2_600, groundSpeedKt: 110 }));
+    const visit = { ...noAlt, positions: noAlt.positions.map((p) => ({ ...p, altitudeFt: null })) };
+    const d = dipEvidence(visit);
+    expect(d.speedChecked && !d.altitudeChecked).toBe(true);
+    const result = assessPattern(base({ visits: [visit] }));
+    const negative = result.reasons.find((r) => r.code === "no_close_dip")?.label ?? "";
+    expect(negative).toMatch(/no speed dip/);
+    expect(negative).not.toMatch(/altitude/);
+    expect(result.reasons.find((r) => r.code === "dip_unknown")?.label).toMatch(/altitude was not reported on 1 pass/);
   });
 
   it("scores repeated dips and calls them unexplained even for a training fleet", () => {
