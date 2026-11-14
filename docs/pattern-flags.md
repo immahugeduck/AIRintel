@@ -21,7 +21,7 @@ Three signals, all measured against the radius **on your phone** (follow-mode si
   (25 ft steps, uncorrected for local pressure), which is why the threshold is 300 ft.
 
 **Touch-and-go and near-field dips (2026-11-14).** A dip's low point is classified (`dipContext`):
-reported on the ground (provider "ground", stored as 0 ft) or within 100 ft of a known field's elevation within 1 NM →
+the provider's recorded on-ground flag (`aircraft_positions.on_ground`) during the traversal, or within 100 ft of a known field's elevation within 1 NM →
 `touch_and_go` (0, not scored). Within 1 NM of a field but higher → `near_field_dip`, 0.5 per pass, max 1.5 (a low pass
 or go-around looks like a dip). Elsewhere → full `close_dip`. Fields = `KNOWN_AIRSTRIPS` (private strips; empty until
 entries are verified against FAA data) + `KNOWN_AIRPORTS`. Passes over public airports are usually airport-area visits

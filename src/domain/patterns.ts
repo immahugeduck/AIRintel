@@ -39,6 +39,8 @@ export type PatternPosition = {
   groundSpeedKt: number | null;
   trackDeg: number | null;
   verticalRateFpm: number | null;
+  /** Provider's on-ground state as recorded (Observed); null/absent when unknown. */
+  onGround?: boolean | null | undefined;
 };
 
 export type CenterMode = "follow" | "fixed";
@@ -170,8 +172,6 @@ export const PATTERN_THRESHOLDS = {
   airstripNm: 1,
   /** Near a field, a low point at most this far above field elevation is read as a touch-and-go / low approach. */
   touchAndGoAglFt: 100,
-  /** At or below this reported altitude the provider said "on the ground" (stored as 0 ft). */
-  onGroundAltitudeFt: 100,
   /** Weight of each near-field dip (max `nearFieldDipMax`): ambiguous, so counted but lightly. */
   nearFieldDipWeight: 0.5,
   nearFieldDipMax: 1.5,
@@ -398,7 +398,7 @@ export function sameDayRepeatDays(entries: readonly string[], timeZone: string =
   return { days, maxEntriesInDay };
 }
 
-export type DipLowPoint = { latitude: number; longitude: number; altitudeFt: number | null };
+export type DipLowPoint = { latitude: number; longitude: number; altitudeFt: number | null; /** The provider reported on-ground during this traversal (recorded flag, not inferred). */ onGround: boolean };
 export type DipEvidence = {
   assessable: boolean; altitudeChecked: boolean; speedChecked: boolean; altitudeDropFt: number; speedDropKt: number; altitudeDip: boolean; speedDip: boolean;
   /** Lowest-altitude position (or slowest, for a speed-only dip) of the deepest dipping traversal; null without a dip. */
@@ -458,7 +458,7 @@ export function dipEvidence(visit: PatternVisit): DipEvidence {
       const pick = alt.dip && withAlt.length > 0
         ? withAlt.reduce((lo, p) => (p.altitudeFt! < lo.altitudeFt! ? p : lo))
         : inside.filter((p) => p.groundSpeedKt !== null).reduce((lo, p) => (p.groundSpeedKt! < lo.groundSpeedKt! ? p : lo));
-      result.lowPoint = { latitude: pick.latitude, longitude: pick.longitude, altitudeFt: pick.altitudeFt };
+      result.lowPoint = { latitude: pick.latitude, longitude: pick.longitude, altitudeFt: pick.altitudeFt, onGround: inside.some((p) => p.onGround === true) };
     }
     result.altitudeDip = result.altitudeDip || alt.dip;
     result.speedDip = result.speedDip || spd.dip;
@@ -469,14 +469,14 @@ export function dipEvidence(visit: PatternVisit): DipEvidence {
 export type DipContext = { kind: "touch_and_go"; field: string | null; onGround: boolean } | { kind: "near_field"; field: string } | { kind: "open" };
 
 /**
- * What a dip's low point was near (Supported inference). Reported on the ground, or within `touchAndGoAglFt` of a
+ * What a dip's low point was near (Supported inference). The provider's recorded on-ground flag during the traversal, or within `touchAndGoAglFt` of a
  * known field's elevation within `airstripNm`: touch-and-go / low approach. Within `airstripNm` of a field but higher:
  * near a field (ambiguous). Otherwise: open country. GPS altitude is height above the WGS-84 ellipsoid, which reads
  * roughly 50–115 ft below sea-level altitude in the US, so "within 100 ft" can include low passes up to ~200 ft.
  */
 export function dipContext(low: DipLowPoint, extraFields: readonly KnownAirport[] = []): DipContext {
   const T = PATTERN_THRESHOLDS;
-  if (low.altitudeFt !== null && low.altitudeFt <= T.onGroundAltitudeFt) return { kind: "touch_and_go", field: null, onGround: true };
+  if (low.onGround) return { kind: "touch_and_go", field: null, onGround: true };
   let nearest: { id: string; elevationFt: number; nm: number } | null = null;
   for (const field of [...extraFields, ...KNOWN_AIRSTRIPS, ...KNOWN_AIRPORTS]) {
     const nm = distanceNm(field.latitude, field.longitude, low.latitude, low.longitude);

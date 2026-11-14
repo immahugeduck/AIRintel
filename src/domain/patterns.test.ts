@@ -408,16 +408,19 @@ describe("touch-and-go and near-field dips", () => {
     return { enteredAt: t(day, 0), lastSeenInRadiusAt: t(day, 12), center: c, positions };
   };
 
-  it("reads a low point reported on the ground as a touch-and-go anywhere", () => {
-    expect(dipContext({ latitude: 40, longitude: -86, altitudeFt: 0 })).toEqual({ kind: "touch_and_go", field: null, onGround: true });
+  it("uses the recorded on-ground flag, not altitude, for an on-ground touch-and-go (Codex review, PR #34)", () => {
+    expect(dipContext({ latitude: 40, longitude: -86, altitudeFt: 1_150, onGround: true })).toEqual({ kind: "touch_and_go", field: null, onGround: true });
+    // A low airborne reading with no on-ground flag is not an on-ground report.
+    expect(dipContext({ latitude: 40, longitude: -86, altitudeFt: 50, onGround: false })).toEqual({ kind: "open" });
   });
 
   it("reads a low point within 100 ft of a known field's elevation as a touch-and-go at that field", () => {
-    expect(dipContext({ ...r2, altitudeFt: 960 })).toEqual({ kind: "touch_and_go", field: "2R2", onGround: false });
-    expect(dipContext({ ...r2, altitudeFt: 1_300 })).toEqual({ kind: "near_field", field: "2R2" });
-    expect(dipContext({ latitude: 40, longitude: -86, altitudeFt: 960 })).toEqual({ kind: "open" });
+    expect(dipContext({ ...r2, altitudeFt: 960, onGround: false })).toEqual({ kind: "touch_and_go", field: "2R2", onGround: false });
+    expect(dipContext({ ...r2, altitudeFt: 1_300, onGround: false })).toEqual({ kind: "near_field", field: "2R2" });
+    expect(dipContext({ latitude: 40, longitude: -86, altitudeFt: 960, onGround: false })).toEqual({ kind: "open" });
   });
 
+  const distanceNmLocal = (latitude: number) => Math.abs(latitude - CENTER.latitude) * NM_PER_DEG_LAT;
   // A private strip right under the watch center (test-only entry; the real list is filled from verified FAA data).
   const strip = [{ id: "TEST1", latitude: CENTER.latitude, longitude: CENTER.longitude, elevationFt: 850 }];
 
@@ -435,8 +438,10 @@ describe("touch-and-go and near-field dips", () => {
     expect(many.reasons.find((r) => r.code === "near_field_dip")?.weight).toBe(1.5);
   });
 
-  it("treats an on-ground report as a touch-and-go even with no strip on file", () => {
-    const result = assessPattern(base({ visits: [passOver(1, CENTER, 0)] }));
+  it("treats a recorded on-ground report as a touch-and-go even with no strip on file", () => {
+    const v = passOver(1, CENTER, 1_100);
+    const flagged = { ...v, positions: v.positions.map((p) => (distanceNmLocal(p.latitude) <= 0.8 ? { ...p, onGround: true } : p)) };
+    const result = assessPattern(base({ visits: [flagged] }));
     expect(result.reasons.find((r) => r.code === "touch_and_go")?.evidence).toBe("Observed");
     expect(result.reasons.some((r) => r.code === "close_dip")).toBe(false);
   });
