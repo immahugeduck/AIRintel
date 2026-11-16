@@ -65,7 +65,6 @@ jobs:
 
           start=$(date +%s); runs=0; inserted=0; encounters=0; skipped=0; partial=0; provider_down=0
           while :; do
-            t0=$(date +%s)
             if ! line="$(sweep_once)"; then echo "::error::Could not reach the sweep endpoint."; exit 1; fi
             read -r code status ins enc <<<"$line"
             runs=$((runs + 1)); inserted=$((inserted + ins)); encounters=$((encounters + enc))
@@ -80,12 +79,11 @@ jobs:
                 echo "::error::Net sweep endpoint answered HTTP ${code} (${status}). Check CRON_SECRET on GitHub and Vercel and /api/health."
                 exit 1 ;;
             esac
-            [ "$status" = "no_areas" ] && break   # nothing to watch: no point looping
-            elapsed=$(( $(date +%s) - start ))
-            [ "$elapsed" -ge "$LOOP_SECONDS" ] && break
-            wait_s=$(( SWEEP_EVERY_SECONDS - ($(date +%s) - t0) ))
-            [ "$wait_s" -gt 0 ] && sleep "$wait_s"
-            [ $(( $(date +%s) - start )) -ge "$LOOP_SECONDS" ] && break
+            # "no_areas" can also mean "not due yet" (polled < NET_SWEEP_MIN_INTERVAL_SECONDS ago), so keep looping.
+            # The server stamps an area when its sweep FINISHES, so the gap is measured from this request's end, not
+            # its start: a slow sweep then never makes the next one land inside the 30 s floor.
+            [ $(( $(date +%s) - start + SWEEP_EVERY_SECONDS )) -gt "$LOOP_SECONDS" ] && break
+            sleep "$SWEEP_EVERY_SECONDS"
           done
 
           echo "### Net sweep: ${runs} sweeps in $(( $(date +%s) - start )) s" >> "$GITHUB_STEP_SUMMARY"
