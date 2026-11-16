@@ -469,3 +469,46 @@ describe("close_dip wording", () => {
     expect(label).not.toMatch(/0 ft/);
   });
 });
+
+describe("v6: heliports, verified airstrips, tighter low-and-slow", () => {
+  const hospitalPad = { latitude: 39.76375, longitude: -86.501175 }; // 74II, elevation 893 ft
+  // A rotorcraft (or fixed-wing) hovering/circling right over the hospital pad, 20 min, low.
+  const overPad = (day: number): PatternVisit => ({ ...spatialOrbit(day, 20, 60, 2, { center: hospitalPad, offsetNm: 0.1, altitudeFt: 1_300, speedKt: 40 }), center: hospitalPad });
+
+  it("reads a helicopter low over a hospital heliport as a landing/departure (airport area)", () => {
+    const result = assessPattern(base({ visitCount: 2, visits: [overPad(1), overPad(2)], identity: { category: "A7" } }));
+    expect(result.reasons.find((r) => r.code === "airport_area")?.label).toMatch(/74II/);
+    expect(result.reasons.some((r) => r.code === "circling" || r.code === "centered_orbit")).toBe(false);
+  });
+
+  it("does not let a heliport explain a fixed-wing aircraft (over the Danville pad it falls in 2R2's pattern area instead)", () => {
+    const fixedWing = assessPattern(base({ visitCount: 2, visits: [overPad(1), overPad(2)], identity: { category: "A1" } }));
+    expect(fixedWing.reasons.find((r) => r.code === "airport_area")?.label).toMatch(/2R2/);
+    expect(fixedWing.reasons.find((r) => r.code === "airport_area")?.label).not.toMatch(/74II/);
+    // Away from any public airport, a fixed-wing aircraft over a heliport is scored normally.
+    const avonPad = { latitude: 39.762222, longitude: -86.395556 }; // 5IN1, ~6 NM from 2R2
+    const overAvon = (day: number): PatternVisit => ({ ...spatialOrbit(day, 20, 60, 2, { center: avonPad, offsetNm: 0.1, altitudeFt: 1_300, speedKt: 40 }), center: avonPad });
+    const plane = assessPattern(base({ visitCount: 2, visits: [overAvon(1), overAvon(2)], identity: { category: "A1" } }));
+    expect(plane.reasons.some((r) => r.code === "airport_area")).toBe(false);
+    expect(plane.reasons.map((r) => r.code)).toEqual(expect.arrayContaining(["circling", "centered_orbit"]));
+    const heli = assessPattern(base({ visitCount: 2, visits: [overAvon(1), overAvon(2)], identity: { category: "A7" } }));
+    expect(heli.reasons.find((r) => r.code === "airport_area")?.label).toMatch(/5IN1/);
+  });
+
+  it("knows the private strips near the user (Cooper Airport 05IN, Clayton)", () => {
+    expect(dipContext({ latitude: 39.6425, longitude: -86.5045, altitudeFt: 930, onGround: false })).toEqual({ kind: "touch_and_go", field: "05IN", onGround: false });
+    expect(dipContext({ latitude: 39.6425, longitude: -86.5045, altitudeFt: 1_400, onGround: false })).toEqual({ kind: "near_field", field: "05IN" });
+  });
+
+  it("only uses heliports for rotorcraft dips", () => {
+    expect(dipContext({ ...hospitalPad, altitudeFt: 950, onGround: false }, [], true)).toEqual({ kind: "touch_and_go", field: "74II", onGround: false });
+    expect(dipContext({ ...hospitalPad, altitudeFt: 950, onGround: false }, [], false)).toEqual({ kind: "open" });
+  });
+
+  it("no longer counts ordinary light-aircraft cruise as low and slow", () => {
+    const cruise = assessPattern(base({ visits: [straightPass(1, 12, 60, { altitudeFt: 2_600, groundSpeedKt: 105 })] }));
+    expect(cruise.reasons.some((r) => r.code === "low_slow")).toBe(false);
+    const loitering = assessPattern(base({ visits: [straightPass(1, 12, 60, { altitudeFt: 1_500, groundSpeedKt: 80 })] }));
+    expect(loitering.reasons.some((r) => r.code === "low_slow")).toBe(true);
+  });
+});

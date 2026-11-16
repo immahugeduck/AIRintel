@@ -81,7 +81,31 @@ export const KNOWN_AIRPORTS: readonly KnownAirport[] = [
  * elevation is read as a touch-and-go (0). Add only entries checked against FAA data (FAA ID, coordinates, elevation).
  * Intentionally empty until verified; public fields in KNOWN_AIRPORTS are checked the same way.
  */
-export const KNOWN_AIRSTRIPS: readonly KnownAirport[] = [];
+export const KNOWN_AIRSTRIPS: readonly KnownAirport[] = [
+  // Private-use fields near Clayton, Danville and Greencastle (FAA 5010 data as republished by AirNav, airport-data.com,
+  // airportguide.com and avnwx.com; looked up 2026-11-16). "Estimated" FAA coordinates; some records date to 2013.
+  { id: "05IN", latitude: 39.641991, longitude: -86.504164, elevationFt: 860 }, // Cooper Airport, Clayton
+  { id: "11IN", latitude: 39.818934, longitude: -86.538056, elevationFt: 950 }, // JR's Airport, 3 NM N of Danville
+  { id: "II82", latitude: 39.794212, longitude: -86.577779, elevationFt: 1_000 }, // Meadors Field, 3 NM NW of Danville
+  { id: "5II1", latitude: 39.782823, longitude: -86.617502, elevationFt: 905 }, // Layne Field, New Winchester
+  { id: "2II4", latitude: 39.711156, longitude: -86.385549, elevationFt: 780 }, // private field SE of Avon
+  { id: "II29", latitude: 39.61088, longitude: -86.756118, elevationFt: 840 }, // Owens Field, 5 mi SE of Greencastle
+  { id: "38II", latitude: 39.728611, longitude: -86.823056, elevationFt: 895 }, // Hampton Field, 6 NM NNE of Greencastle
+  { id: "99II", latitude: 39.5835, longitude: -86.952528, elevationFt: 880 }, // Cooper, 2 NM NE of Reelsville
+  { id: "IN45", latitude: 39.825045, longitude: -86.883342, elevationFt: 810 }, // private field N of Greencastle
+];
+
+/**
+ * Heliports near the user (same sources and date as KNOWN_AIRSTRIPS). They explain HELICOPTER traffic only: a
+ * rotorcraft visit centered within `heliportNm` below `heliportAglFt` is a landing/departure (airport area), and a
+ * rotorcraft dip there is a landing. Fixed-wing aircraft near a heliport are scored normally.
+ */
+export const KNOWN_HELIPORTS: readonly KnownAirport[] = [
+  { id: "74II", latitude: 39.76375, longitude: -86.501175, elevationFt: 893 }, // Hendricks Regional Health hospital pad, Danville
+  { id: "5IN1", latitude: 39.762222, longitude: -86.395556, elevationFt: 832 }, // IU Health West Hospital, Avon
+  { id: "4IN6", latitude: 39.745556, longitude: -86.644444, elevationFt: 934 }, // Dragons Den Heliport, 6 NM W of Danville
+  { id: "8II4", latitude: 39.614491, longitude: -86.520831, elevationFt: 815 }, // Helton Heliport, Hazelwood
+];
 
 /** Time zone used to count "days" for recurrence and control comparison. */
 export const PATTERN_TIME_ZONE = "America/Indianapolis";

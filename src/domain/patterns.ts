@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { distanceNm } from "./geometry.js";
-import { CHARTER_OPERATORS, EDUCATION_OWNER, KNOWN_AIRPORTS, KNOWN_AIRSTRIPS, PATTERN_TIME_ZONE, type KnownAirport, SCHEDULED_OPERATORS, TRAINING_FLEETS } from "./pattern-config.js";
+import { CHARTER_OPERATORS, EDUCATION_OWNER, KNOWN_AIRPORTS, KNOWN_AIRSTRIPS, KNOWN_HELIPORTS, PATTERN_TIME_ZONE, type KnownAirport, SCHEDULED_OPERATORS, TRAINING_FLEETS } from "./pattern-config.js";
 
-export { CHARTER_OPERATORS, KNOWN_AIRPORTS, KNOWN_AIRSTRIPS, SCHEDULED_OPERATORS, TRAINING_FLEETS } from "./pattern-config.js";
+export { CHARTER_OPERATORS, KNOWN_AIRPORTS, KNOWN_AIRSTRIPS, KNOWN_HELIPORTS, SCHEDULED_OPERATORS, TRAINING_FLEETS } from "./pattern-config.js";
 
 /**
  * Pattern flags (`pattern-flags-v4`; see assessPattern for what changed from v3): a deterministic review-priority score for netted aircraft.
@@ -29,7 +29,7 @@ export { CHARTER_OPERATORS, KNOWN_AIRPORTS, KNOWN_AIRSTRIPS, SCHEDULED_OPERATORS
  *   identity gaps. Aircraft with too few recorded positions get "insufficient" (not enough data) instead of a guess,
  *   and can never reach "priority" on identity facts alone.
  */
-export const PATTERN_ALGORITHM_VERSION = "pattern-flags-v5";
+export const PATTERN_ALGORITHM_VERSION = "pattern-flags-v6";
 
 export type PatternPosition = {
   observedAt: string;
@@ -127,8 +127,13 @@ export const PATTERN_THRESHOLDS = {
   loiterMinutes: 15,
   circlingTurnDeg: 300,
   orbitCenterNm: 2,
-  lowAltitudeFt: 6_000,
-  slowGroundSpeedKt: 140,
+  // v6: was 6,000 ft / 140 kt, which every light aircraft in cruise met (+1 for nearly all GA). Now ~2,000 ft above
+  // central-Indiana ground and slower than a typical trainer cruise, i.e. maneuvering or loitering low.
+  lowAltitudeFt: 3_000,
+  slowGroundSpeedKt: 100,
+  /** A helicopter visit centered within this distance of a known heliport, below `heliportAglFt`, is a landing/departure. */
+  heliportNm: 1,
+  heliportAglFt: 1_000,
   cruiseAltitudeFt: 10_000,
   climbDescentFpm: 500,
   /** A visit is judged only with at least this many positions spanning at least `assessableMinutes`. */
@@ -338,8 +343,15 @@ export function routineExplanation(input: { callsign: string | null; registratio
 }
 
 /** Known airport whose traffic pattern explains circling at this centroid and altitude, if any. */
-export function airportPatternAt(centroid: { latitude: number; longitude: number }, medianAltitudeFt: number | null): string | null {
+export function airportPatternAt(centroid: { latitude: number; longitude: number }, medianAltitudeFt: number | null, rotorcraft = false): string | null {
   const T = PATTERN_THRESHOLDS;
+  if (rotorcraft) {
+    for (const pad of KNOWN_HELIPORTS) {
+      if (distanceNm(pad.latitude, pad.longitude, centroid.latitude, centroid.longitude) > T.heliportNm) continue;
+      if (medianAltitudeFt !== null && medianAltitudeFt > pad.elevationFt + T.heliportAglFt) continue;
+      return pad.id;
+    }
+  }
   for (const airport of KNOWN_AIRPORTS) {
     if (distanceNm(airport.latitude, airport.longitude, centroid.latitude, centroid.longitude) > T.airportPatternNm) continue;
     if (medianAltitudeFt !== null && medianAltitudeFt > airport.elevationFt + T.airportPatternAglFt) continue;
@@ -474,11 +486,11 @@ export type DipContext = { kind: "touch_and_go"; field: string | null; onGround:
  * near a field (ambiguous). Otherwise: open country. GPS altitude is height above the WGS-84 ellipsoid, which reads
  * roughly 50–115 ft below sea-level altitude in the US, so "within 100 ft" can include low passes up to ~200 ft.
  */
-export function dipContext(low: DipLowPoint, extraFields: readonly KnownAirport[] = []): DipContext {
+export function dipContext(low: DipLowPoint, extraFields: readonly KnownAirport[] = [], rotorcraft = false): DipContext {
   const T = PATTERN_THRESHOLDS;
   if (low.onGround) return { kind: "touch_and_go", field: null, onGround: true };
   let nearest: { id: string; elevationFt: number; nm: number } | null = null;
-  for (const field of [...extraFields, ...KNOWN_AIRSTRIPS, ...KNOWN_AIRPORTS]) {
+  for (const field of [...extraFields, ...KNOWN_AIRSTRIPS, ...KNOWN_AIRPORTS, ...(rotorcraft ? KNOWN_HELIPORTS : [])]) {
     const nm = distanceNm(field.latitude, field.longitude, low.latitude, low.longitude);
     if (nm <= T.airstripNm && (!nearest || nm < nearest.nm)) nearest = { id: field.id, elevationFt: field.elevationFt, nm };
   }
@@ -488,12 +500,12 @@ export function dipContext(low: DipLowPoint, extraFields: readonly KnownAirport[
 }
 
 /** Known airport whose traffic area explains a visit (centroid of its positions near the field, at pattern height). */
-export function visitAirport(visit: PatternVisit, geometry: CirclingEvidence): string | null {
+export function visitAirport(visit: PatternVisit, geometry: CirclingEvidence, rotorcraft = false): string | null {
   const points = visit.positions.filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
   if (points.length === 0) return null;
   const centroid = geometry.centroid ?? { latitude: points.reduce((s, p) => s + p.latitude, 0) / points.length, longitude: points.reduce((s, p) => s + p.longitude, 0) / points.length };
   const altitudes = points.flatMap((p) => (p.altitudeFt === null ? [] : [p.altitudeFt]));
-  return airportPatternAt(centroid, geometry.medianAltitudeFt ?? median(altitudes));
+  return airportPatternAt(centroid, geometry.medianAltitudeFt ?? median(altitudes), rotorcraft);
 }
 
 /**
@@ -512,6 +524,7 @@ export function assessPattern(input: PatternInput): PatternAssessment {
   const T = PATTERN_THRESHOLDS;
   const timeZone = input.timeZone ?? PATTERN_TIME_ZONE;
   const identity = input.identity ?? {};
+  const rotorcraft = identity.category?.trim().toUpperCase() === "A7" || identity.faaAircraftType?.trim().toUpperCase() === "6";
   const reasons: PatternReason[] = [];
   const allPositions = input.visits.flatMap((visit) => visit.positions);
   const allAltitudes = allPositions.flatMap((p) => (p.altitudeFt === null ? [] : [p.altitudeFt]));
@@ -521,7 +534,7 @@ export function assessPattern(input: PatternInput): PatternAssessment {
   // Geometry and airport area per visit.
   const evidence = input.visits.map((visit) => {
     const geometry = circlingEvidence(visit.positions);
-    return { visit, geometry, airport: visitAirport(visit, geometry) };
+    return { visit, geometry, airport: visitAirport(visit, geometry, rotorcraft) };
   });
   const assessable = evidence.filter((e) => e.geometry.assessable).length;
   const positioned = evidence.filter((e) => e.visit.positions.length > 0);
@@ -597,7 +610,6 @@ export function assessPattern(input: PatternInput): PatternAssessment {
   if (identity.registrantKind === "government" && !EDUCATION_OWNER.test(owner)) {
     reasons.push({ code: "government_owner", label: owner ? `FAA registrant is a government body (${owner})` : "FAA registrant type: government", evidence: "Observed", weight: 2 });
   }
-  const rotorcraft = identity.category?.trim().toUpperCase() === "A7" || identity.faaAircraftType?.trim().toUpperCase() === "6";
   if (rotorcraft && (circlingVisits.length > 0 || longVisits.length > 0)) {
     reasons.push({ code: "rotorcraft_loiter", label: "Helicopter circling or loitering (news, medical, police and utility helicopters all do this)", evidence: "Supported inference", weight: 1 });
   }
@@ -643,7 +655,7 @@ export function assessPattern(input: PatternInput): PatternAssessment {
   // v5: dips in altitude/speed inside 2 mi of the watch center (airport-area visits excluded: approaches descend).
   const dips = away.map((e) => dipEvidence(e.visit));
   const dipAssessable = dips.filter((d) => d.assessable).length;
-  const dipped = dips.filter((d) => d.altitudeDip || d.speedDip).map((d) => ({ d, where: dipContext(d.lowPoint!, input.extraAirstrips) }));
+  const dipped = dips.filter((d) => d.altitudeDip || d.speedDip).map((d) => ({ d, where: dipContext(d.lowPoint!, input.extraAirstrips, rotorcraft) }));
   const touchAndGo = dipped.filter((x) => x.where.kind === "touch_and_go");
   const nearField = dipped.filter((x) => x.where.kind === "near_field");
   const anyDips = dipped.filter((x) => x.where.kind === "open").map((x) => x.d);

@@ -1,4 +1,18 @@
-# Pattern flags (`pattern-flags-v5`)
+# Pattern flags (`pattern-flags-v6`)
+
+## v6 changes (2026-11-16)
+
+- **Airstrips:** `KNOWN_AIRSTRIPS` now lists 9 private-use fields near Clayton, Danville and Greencastle (05IN, 11IN,
+  II82, 5II1, 2II4, II29, 38II, 99II, IN45), from FAA 5010 data as republished by AirNav and others (see the config
+  comments). They feed the touch-and-go / near-field dip rules.
+- **Heliports:** `KNOWN_HELIPORTS` (74II Danville hospital, 5IN1 Avon hospital, 4IN6, 8II4) explain **helicopter**
+  traffic only: a rotorcraft visit centered within 1 NM below 1,000 ft above the pad is an airport-area visit, and a
+  rotorcraft dip there is a landing. Fixed-wing aircraft are not excused by a heliport (note: the Danville hospital pad
+  is ~1.6 NM from 2R2, so low fixed-wing traffic over it already falls in 2R2's pattern area).
+- **Low and slow** tightened from ≤ 6,000 ft and ≤ 140 kt (true of nearly every light aircraft in cruise) to ≤ 3,000 ft
+  and ≤ 100 kt (maneuvering or loitering low).
+
+## v5 (pattern-flags-v5)
 
 ## v5 additions (2026-11-14)
 
