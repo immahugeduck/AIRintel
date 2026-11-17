@@ -5,13 +5,20 @@
 #   CRON_SECRET         the same value as the CRON_SECRET environment variable on Vercel
 #
 # GitHub's scheduler is best-effort: the minimum interval is 5 minutes, runs can be delayed under load, and scheduled
-# workflows pause after 60 days without repository activity (re-enable in the Actions tab). For 1-minute sweeps use the
-# Vercel Pro cron or an external pinger - see docs/netted-aircraft.md.
+# workflows pause after 60 days without repository activity (re-enable in the Actions tab). So each run stays up for
+# about 4.5 minutes and sweeps every SWEEP_EVERY_SECONDS (default 30 s, the server's NET_SWEEP_MIN_INTERVAL_SECONDS
+# floor), giving the always-on net ~30 s sampling instead of one snapshot per 6-12 min. A run that starts while the
+# previous one is still looping waits (concurrency group), so two loops never overlap.
 name: Net sweep
 on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      loop_seconds:
+        description: "How long this run keeps sweeping (seconds). 0 = a single sweep."
+        required: false
+        default: "270"
 
 permissions: {}
 
@@ -22,12 +29,14 @@ concurrency:
 jobs:
   sweep:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 7
     steps:
-      - name: Call the sweep endpoint
+      - name: Sweep every 30 s for ~4.5 min
         env:
           SWEEP_URL: ${{ secrets.AIRINTEL_SWEEP_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          LOOP_SECONDS: ${{ github.event.inputs.loop_seconds || '270' }}
+          SWEEP_EVERY_SECONDS: "32"
         run: |
           set -euo pipefail
           if [ -z "${SWEEP_URL:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
@@ -35,39 +44,53 @@ jobs:
             exit 0
           fi
           case "$SWEEP_URL" in https://*) ;; *) echo "::error::AIRINTEL_SWEEP_URL must start with https://"; exit 1;; esac
-          # No curl retry on HTTP errors: the endpoint already retries the provider, and a blind retry used to hide a
-          # failed sweep behind a green "no_areas" answer. The Authorization header is read from stdin so the secret
-          # never appears in the process list or logs. --max-time covers the 60 s Vercel function limit.
-          body="$(mktemp)"
-          if ! code="$(printf 'header = "Authorization: Bearer %s"\n' "$CRON_SECRET" | curl --silent --show-error \
-              --max-time 75 \
-              --config - -X POST -H "Accept: application/json" -o "$body" -w '%{http_code}' "$SWEEP_URL")"; then
-            echo "::error::Could not reach the sweep endpoint."
-            exit 1
+          case "$LOOP_SECONDS" in ''|*[!0-9]*) echo "::error::loop_seconds must be a whole number"; exit 1;; esac
+
+          # One sweep. No curl retry on HTTP errors: the endpoint already retries the provider, and a blind retry used
+          # to hide a failed sweep behind a green "no_areas" answer. The Authorization header is read from stdin so the
+          # secret never appears in the process list or logs. --max-time covers the 60 s Vercel function limit.
+          # Prints "<http code> <status> <inserted> <encounters>"; returns 1 only when the endpoint is unreachable.
+          BODY_FILE="$(mktemp)"   # last response body; a file because sweep_once runs in a $( ) subshell
+          sweep_once() {
+            local code
+            if ! code="$(printf 'header = "Authorization: Bearer %s"\n' "$CRON_SECRET" | curl --silent --show-error \
+                --max-time 75 --config - -X POST -H "Accept: application/json" -o "$BODY_FILE" -w '%{http_code}' "$SWEEP_URL")"; then
+              return 1
+            fi
+            printf '%s %s %s %s\n' "$code" \
+              "$(jq -r '.status // "unknown"' "$BODY_FILE" 2>/dev/null || echo unknown)" \
+              "$(jq -r '.observations.inserted // 0' "$BODY_FILE" 2>/dev/null || echo 0)" \
+              "$(jq -r '.encounters.started // 0' "$BODY_FILE" 2>/dev/null || echo 0)"
+          }
+
+          start=$(date +%s); runs=0; inserted=0; encounters=0; skipped=0; partial=0; provider_down=0
+          while :; do
+            if ! line="$(sweep_once)"; then echo "::error::Could not reach the sweep endpoint."; exit 1; fi
+            read -r code status ins enc <<<"$line"
+            runs=$((runs + 1)); inserted=$((inserted + ins)); encounters=$((encounters + enc))
+            echo "sweep ${runs}: HTTP ${code} ${status} (+${ins} observations, +${enc} encounters)"
+            case "$code:$status" in
+              200:completed|200:no_areas|200:provider_not_configured) ;;
+              200:skipped_locked) skipped=$((skipped + 1)) ;;
+              200:partial) partial=$((partial + 1)) ;;
+              502:failed) provider_down=$((provider_down + 1)) ;;
+              *)
+                cat "$BODY_FILE"; echo
+                echo "::error::Net sweep endpoint answered HTTP ${code} (${status}). Check CRON_SECRET on GitHub and Vercel and /api/health."
+                exit 1 ;;
+            esac
+            # "no_areas" can also mean "not due yet" (polled < NET_SWEEP_MIN_INTERVAL_SECONDS ago), so keep looping.
+            # The server stamps an area when its sweep FINISHES, so the gap is measured from this request's end, not
+            # its start: a slow sweep then never makes the next one land inside the 30 s floor.
+            [ $(( $(date +%s) - start + SWEEP_EVERY_SECONDS )) -gt "$LOOP_SECONDS" ] && break
+            sleep "$SWEEP_EVERY_SECONDS"
+          done
+
+          echo "### Net sweep: ${runs} sweeps in $(( $(date +%s) - start )) s" >> "$GITHUB_STEP_SUMMARY"
+          echo "Observations recorded: ${inserted} · new encounters: ${encounters} · skipped (locked): ${skipped} · partial: ${partial} · provider down: ${provider_down}" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$provider_down" -gt 0 ]; then
+            # No aircraft provider answered on some sweeps: an outside outage, not a broken setup. Warn, don't fail.
+            echo "::warning::${provider_down} of ${runs} sweeps recorded nothing: no aircraft provider answered."
           fi
-          cat "$body"; echo
-          status="$(jq -r '.status // "unknown"' "$body" 2>/dev/null || echo unknown)"
-          errors="$(jq -r '[.errors[]? | "\(.code) x\(.count)"] | join(", ")' "$body" 2>/dev/null || true)"
-          inserted="$(jq -r '.observations.inserted // 0' "$body" 2>/dev/null || echo 0)"
-          encounters="$(jq -r '.encounters.started // 0' "$body" 2>/dev/null || echo 0)"
-          served="$(jq -r '[.providers.served[]? | "\(.provider) x\(.queries)"] | join(", ")' "$body" 2>/dev/null || true)"
-          provider_failures="$(jq -r '[.providers.failures[]? | "\(.provider)=\(.code)\(if .detail then "(\(.detail))" else "" end) x\(.count)"] | join(", ")' "$body" 2>/dev/null || true)"
-          echo "### Net sweep: ${status} (HTTP ${code})" >> "$GITHUB_STEP_SUMMARY"
-          echo "Observations recorded: ${inserted} · new encounters: ${encounters}${errors:+ · errors: ${errors}}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Providers: ${served:-none}${provider_failures:+ · failed: ${provider_failures}}" >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$provider_failures" ] && [ -n "$served" ]; then
-            echo "::notice::Fallback aircraft provider used (${served}); failed: ${provider_failures}."
-          fi
-          case "$code:$status" in
-            200:completed|200:no_areas|200:skipped_locked|200:provider_not_configured)
-              echo "::notice::Net sweep ${status}: ${inserted} observations recorded, ${encounters} new encounters." ;;
-            200:partial)
-              echo "::warning::Net sweep partial (${errors:-some areas deferred}): ${inserted} observations recorded." ;;
-            502:failed)
-              # No aircraft provider (adsb.lol or its fallbacks) answered. That is an outside outage, not a broken setup, so
-              # it is reported as a warning (visible on the run) without failing the job and sending failure emails.
-              echo "::warning::Net sweep recorded nothing: no aircraft provider answered (${provider_failures:-${errors:-provider error}}). The next run will try again." ;;
-            *)
-              echo "::error::Net sweep endpoint answered HTTP ${code} (${status}). Check CRON_SECRET on GitHub and Vercel and /api/health."
-              exit 1 ;;
-          esac
+          [ "$partial" -gt 0 ] && echo "::warning::${partial} of ${runs} sweeps were partial (some areas deferred or errors)."
+          echo "::notice::Net sweep: ${runs} sweeps, ${inserted} observations, ${encounters} new encounters."

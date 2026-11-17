@@ -46,7 +46,7 @@ A fast jet crosses a 7-mile radius in about two minutes, so 1-minute polling is 
 
 | Option | Interval | Cost | Setup |
 | --- | --- | --- | --- |
-| **GitHub Actions** (`.github/workflows/net-sweep.yml`, included) | every 5 min, best effort (may be delayed; paused after 60 days of repo inactivity) | free | Secrets `AIRINTEL_SWEEP_URL` (e.g. `https://your-app.vercel.app/api/net/sweep`) and `CRON_SECRET`; Actions → Net sweep → Run workflow to test |
+| **GitHub Actions** (`.github/workflows/net-sweep.yml`, included) | each run starts every 5–12 min (best effort; paused after 60 days of repo inactivity) and sweeps every ~32 s for ~4.5 min, so coverage is ~30 s sampling most of the time | free on public repos (private repos use Actions minutes: ~5 min per run) | Secrets `AIRINTEL_SWEEP_URL` (e.g. `https://your-app.vercel.app/api/net/sweep`) and `CRON_SECRET`; Actions → Net sweep → Run workflow to test |
 | **Vercel Pro cron** | every minute | Vercel Pro | add the snippet below, redeploy; Vercel sends `Authorization: Bearer $CRON_SECRET` itself |
 | **External pinger** (cron-job.org, UptimeRobot, Cloudflare Worker cron…) | 1 min | free tiers | `POST https://your-app.vercel.app/api/net/sweep` with header `Authorization: Bearer <CRON_SECRET>` every minute |
 
@@ -60,7 +60,7 @@ You can run GitHub Actions and one other trigger together: the lease and `NET_SW
 
 Provider wait: each sweep waits up to 15 s per adsb.lol request (one retry when the 40 s budget `NET_SWEEP_BUDGET_MS` still has room for two attempts; max 45 s), inside the 60 s Vercel function limit (`vercel.json` `maxDuration`). The GitHub workflow reports each run in its summary: a run where adsb.lol did not answer stays green but carries a warning ("recorded nothing: the aircraft provider did not answer"); only setup problems (wrong secret, endpoint unreachable, not configured) fail the job.
 
-Coverage caveat: with 5-minute polling, a slow aircraft that is inside the radius for under 5 minutes can still be missed entirely. The log shows only what was observed; nothing is interpolated.
+Coverage caveat: between GitHub runs (when a scheduled run starts late) there can be gaps of a few minutes, and an aircraft inside the radius only during a gap is missed. Storage: ~32 s sampling records roughly 10× the positions of 5-minute polling; set `NET_RETENTION_DAYS` (e.g. 90) on Vercel to purge old observations in bounded batches during sweeps. The log shows only what was observed; nothing is interpolated.
 
 ### Retention
 
