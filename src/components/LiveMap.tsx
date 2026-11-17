@@ -32,7 +32,22 @@ const NO_TRACK_POINTS: TrackPoint[] = [];
 function MapCenter({ center, radiusNm }: { center: LatLngExpression; radiusNm: number }) {
   const map = useMap();
   const { lat, lng } = latLng(center);
-  useEffect(() => { map.fitBounds(watchAreaBounds(lat, lng, radiusNm), { padding: [16, 16] }); }, [map, lat, lng, radiusNm]);
+  useEffect(() => {
+    const container = map.getContainer();
+    // On phones the map is display:none while another tab is open. Fitting a 0×0 map yields NaN coordinates and
+    // Leaflet throws, which took the whole map down (location or follow-me change made while on another tab).
+    const fit = () => {
+      if (container.clientWidth === 0 || container.clientHeight === 0) return false;
+      map.invalidateSize({ pan: false });
+      map.fitBounds(watchAreaBounds(lat, lng, radiusNm), { padding: [16, 16] });
+      return true;
+    };
+    if (fit()) return;
+    // Hidden: fit as soon as the map has a size again (MapResizer's invalidateSize fires "resize").
+    const onResize = () => { if (fit()) map.off("resize", onResize); };
+    map.on("resize", onResize);
+    return () => { map.off("resize", onResize); };
+  }, [map, lat, lng, radiusNm]);
   return null;
 }
 
