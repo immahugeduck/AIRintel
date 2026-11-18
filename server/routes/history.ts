@@ -34,9 +34,12 @@ type LogEncounterRow = {
   closest_at?: Date | null; closest_latitude?: number | null; closest_longitude?: number | null; closest_altitude_ft?: number | null;
   closest_altitude_source?: string | null; closest_ground_speed_kt?: number | null; closest_track_deg?: number | null;
   closest_vertical_rate_fpm?: number | null; closest_on_ground?: boolean | null; closest_point_basis?: string | null;
+  radius_nm?: number | null; closest_center_latitude?: number | null; closest_center_longitude?: number | null;
+  last_outside_before_entry_at?: Date | null; first_outside_after_exit_at?: Date | null;
 };
 const CLOSEST_COLUMNS = `, closest_at, closest_latitude, closest_longitude, closest_altitude_ft, closest_altitude_source, closest_ground_speed_kt,
        closest_track_deg, closest_vertical_rate_fpm, closest_on_ground, closest_point_basis`;
+const TIMING_COLUMNS = `, closest_center_latitude, closest_center_longitude, last_outside_before_entry_at, first_outside_after_exit_at`;
 const ALTITUDE_SOURCES = new Set(["geometric", "barometric", "provider"]);
 
 /** Encounter row -> closest-point DTO; null when the snapshot is unknown (purged positions, pre-0008 database). */
@@ -49,7 +52,9 @@ function closestFromRow(row: LogEncounterRow): ClosestPoint | null {
     groundSpeedKt: row.closest_ground_speed_kt ?? null, trackDeg: row.closest_track_deg ?? null,
     verticalRateFpm: row.closest_vertical_rate_fpm ?? null, onGround: row.closest_on_ground ?? null,
   };
-  const center = row.center_latitude != null && row.center_longitude != null ? { latitude: row.center_latitude, longitude: row.center_longitude } : null;
+  // Prefer the center in effect at the closest moment (follow me moves it during an encounter); fall back to the entry center.
+  const center = row.closest_center_latitude != null && row.closest_center_longitude != null ? { latitude: row.closest_center_latitude, longitude: row.closest_center_longitude }
+    : row.center_latitude != null && row.center_longitude != null ? { latitude: row.center_latitude, longitude: row.center_longitude } : null;
   const point = closestPointFrom(observed, center ?? { latitude: row.closest_latitude, longitude: row.closest_longitude }, row.closest_point_basis === "backfill" ? "backfill" : "at_write");
   return center ? point : { ...point, bearingFromCenterDeg: null };
 }
@@ -325,20 +330,22 @@ export function historyRoutes(db: Queryable) {
     /** Newest MAX_VISITS_PER_AIRCRAFT encounters per aircraft, with the closest-point snapshot when migration 0008 is applied. */
     async function loadLogEncounters(userId: string, icaos: string[]): Promise<LogEncounterRow[]> {
       const run = (extra: string) => db.query<LogEncounterRow>(
-        `select icao24, entered_at, last_seen_in_radius_at, closest_approach_nm, observation_count, center_latitude, center_longitude${extra}
+        `select icao24, entered_at, last_seen_in_radius_at, closest_approach_nm, observation_count, center_latitude, center_longitude, radius_nm${extra}
            from (select e.*, row_number() over (partition by e.icao24 order by e.entered_at desc) as rn
                    from airintel_private.encounters e where e.user_id = $1::uuid and e.icao24 = any($2::text[])) ranked
           where rn <= $3
           order by icao24, entered_at desc`,
         [userId, icaos, MAX_VISITS_PER_AIRCRAFT],
       );
-      try {
-        return (await run(CLOSEST_COLUMNS)).rows;
-      } catch (error) {
-        // Migration 0008 not applied yet: serve the log without snapshots instead of failing it.
-        if ((error as { code?: unknown } | null)?.code !== "42703") throw error;
-        return (await run("")).rows;
+      // Newest schema first; each missing migration (0009, then 0008) drops its columns instead of failing the log.
+      for (const extra of [CLOSEST_COLUMNS + TIMING_COLUMNS, CLOSEST_COLUMNS, ""]) {
+        try {
+          return (await run(extra)).rows;
+        } catch (error) {
+          if ((error as { code?: unknown } | null)?.code !== "42703" || extra === "") throw error;
+        }
       }
+      return [];
     }
 
     async function savedLog(lat: number, lon: number, radiusMi: number, hours: number) {
@@ -377,7 +384,7 @@ export function historyRoutes(db: Queryable) {
       const visits = new Map<string, NettedAircraft["visits"]>();
       for (const row of encounters) {
         const list = visits.get(row.icao24) ?? [];
-        list.push({ enteredAt: iso(row.entered_at)!, lastSeenInRadiusAt: iso(row.last_seen_in_radius_at)!, closestMi: nmToMiles(row.closest_approach_nm), observationCount: Math.max(1, row.observation_count), centerLatitude: row.center_latitude ?? null, centerLongitude: row.center_longitude ?? null, closest: closestFromRow(row) });
+        list.push({ enteredAt: iso(row.entered_at)!, lastSeenInRadiusAt: iso(row.last_seen_in_radius_at)!, closestMi: nmToMiles(row.closest_approach_nm), observationCount: Math.max(1, row.observation_count), centerLatitude: row.center_latitude ?? null, centerLongitude: row.center_longitude ?? null, closest: closestFromRow(row), enteredAfter: iso(row.last_outside_before_entry_at ?? null), exitedBefore: iso(row.first_outside_after_exit_at ?? null), radiusMi: row.radius_nm ? nmToMiles(row.radius_nm) : null });
         visits.set(row.icao24, list);
       }
       const typeCodes = new Map(types.rows.flatMap((row) => (row.type_code ? [[row.icao24, row.type_code] as const] : [])));

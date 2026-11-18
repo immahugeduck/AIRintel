@@ -39,15 +39,17 @@ export type EncounterObservation = {
  */
 export type ClosestPoint = {
   at: number; latitude: number; longitude: number;
+  /** Watch center the distance was measured from at that moment (it moves with follow me). */
+  centerLatitude: number; centerLongitude: number;
   altitudeFt: number | null; altitudeSource: AltitudeSource | null; groundSpeedKt: number | null;
   trackDeg: number | null; verticalRateFpm: number | null; onGround: boolean | null;
 };
 
 const num = (value: number | null | undefined) => (typeof value === "number" && Number.isFinite(value) ? value : null);
-const snapshot = (o: EncounterObservation, at: number): ClosestPoint => {
+const snapshot = (o: EncounterObservation, at: number, area: EncounterArea): ClosestPoint => {
   const altitudeFt = num(o.altitudeFt);
   return {
-    at, latitude: o.latitude, longitude: o.longitude,
+    at, latitude: o.latitude, longitude: o.longitude, centerLatitude: area.latitude, centerLongitude: area.longitude,
     altitudeFt, altitudeSource: altitudeFt === null ? null : o.altitudeSource ?? null,
     groundSpeedKt: num(o.groundSpeedKt), trackDeg: num(o.trackDeg), verticalRateFpm: num(o.verticalRateFpm),
     onGround: typeof o.onGround === "boolean" ? o.onGround : null,
@@ -57,11 +59,19 @@ const snapshot = (o: EncounterObservation, at: number): ClosestPoint => {
 /** Detection state carried between batches (one tally row). */
 export type EncounterState = { lastObservedAt: number | null; lastInside: boolean; openEncounterId: string | null };
 
-export type EncounterSegment = { enteredAt: number; lastSeenAt: number; closestNm: number; closest: ClosestPoint; observationCount: number; callsign: string | null; registration: string | null };
+/**
+ * entryBoundAt / exitBoundAt (migration 0009): the observations just outside the radius around the encounter, when
+ * they are within the reception gap. The real crossing happened between entryBoundAt and enteredAt, and between
+ * lastSeenAt and exitBoundAt, so time inside is at least lastSeenAt − enteredAt and at most exitBoundAt − entryBoundAt.
+ * Null when there was no outside observation close enough in time (first sighting, reception gap, still inside).
+ */
+export type EncounterSegment = { enteredAt: number; lastSeenAt: number; closestNm: number; closest: ClosestPoint; observationCount: number; callsign: string | null; registration: string | null; entryBoundAt: number | null; exitBoundAt: number | null };
 
 export type EncounterAdvance = {
   /** Observations folded into the already-open encounter (null when none). */
-  continued: Omit<EncounterSegment, "enteredAt"> | null;
+  continued: Omit<EncounterSegment, "enteredAt" | "entryBoundAt" | "exitBoundAt"> | null;
+  /** The already-open encounter ended in this batch on an observation outside the radius at this time. */
+  openExitBoundAt: number | null;
   /** New encounters, oldest first. */
   started: EncounterSegment[];
   /** Watermark and inside flag after this batch; null when no observation was newer than the watermark. */
@@ -80,7 +90,7 @@ export function advanceEncounters(state: EncounterState, observations: readonly 
     .map((observation) => ({ observation, time: Date.parse(observation.observedAt) }))
     .filter(({ time }) => Number.isFinite(time) && (state.lastObservedAt === null || time > state.lastObservedAt))
     .sort((a, b) => a.time - b.time);
-  const result: EncounterAdvance = { continued: null, started: [], next: null };
+  const result: EncounterAdvance = { continued: null, started: [], next: null, openExitBoundAt: null };
   if (fresh.length === 0) return result;
 
   let previous: { time: number; inside: boolean } | null = state.lastObservedAt === null ? null : { time: state.lastObservedAt, inside: state.lastInside };
@@ -94,26 +104,30 @@ export function advanceEncounters(state: EncounterState, observations: readonly 
       const starts = previous === null || !previous.inside || time - previous.time > gapMs;
       if (starts) {
         if (current === "open") closesOpen = true;
-        current = { enteredAt: time, lastSeenAt: time, closestNm: distance, closest: snapshot(observation, time), observationCount: 0, callsign: null, registration: null };
+        const entryBoundAt = previous !== null && !previous.inside && time - previous.time <= gapMs ? previous.time : null;
+        current = { enteredAt: time, lastSeenAt: time, closestNm: distance, closest: snapshot(observation, time, area), observationCount: 0, callsign: null, registration: null, entryBoundAt, exitBoundAt: null };
         result.started.push(current);
       }
       if (current === "open") {
-        const continued = result.continued ?? { lastSeenAt: time, closestNm: distance, closest: snapshot(observation, time), observationCount: 0, callsign: null, registration: null };
+        const continued = result.continued ?? { lastSeenAt: time, closestNm: distance, closest: snapshot(observation, time, area), observationCount: 0, callsign: null, registration: null };
         continued.lastSeenAt = time;
-        if (distance < continued.closestNm) { continued.closestNm = distance; continued.closest = snapshot(observation, time); }
+        if (distance < continued.closestNm) { continued.closestNm = distance; continued.closest = snapshot(observation, time, area); }
         continued.observationCount += 1;
         continued.callsign = clip(observation.callsign) ?? continued.callsign;
         continued.registration = clip(observation.registration) ?? continued.registration;
         result.continued = continued;
       } else if (current) {
         current.lastSeenAt = time;
-        if (distance < current.closestNm) { current.closestNm = distance; current.closest = snapshot(observation, time); }
+        if (distance < current.closestNm) { current.closestNm = distance; current.closest = snapshot(observation, time, area); }
         current.observationCount += 1;
         current.callsign = clip(observation.callsign) ?? current.callsign;
         current.registration = clip(observation.registration) ?? current.registration;
       }
     } else {
-      if (current === "open") closesOpen = true;
+      // Leaving: this outside observation bounds the exit when it follows an inside one within the reception gap.
+      const exitBound = previous !== null && previous.inside && time - previous.time <= gapMs ? time : null;
+      if (current === "open") { closesOpen = true; result.openExitBoundAt = exitBound; }
+      else if (current) current.exitBoundAt = exitBound;
       current = null;
     }
     previous = { time, inside };
@@ -169,6 +183,9 @@ export async function recordEncounters(db: Queryable, userId: string, area: Enco
         const closestUpdates = advance.started.flatMap((segment, index) => (insertedIds[index] ? [{ id: insertedIds[index]!, distanceNm: segment.closestNm, point: segment.closest }] : []));
         if (advance.continued && state.openEncounterId) closestUpdates.push({ id: state.openEncounterId, distanceNm: advance.continued.closestNm, point: advance.continued.closest });
         if (closestUpdates.length > 0) await recordClosestPoints(db, closestUpdates);
+        const boundUpdates = advance.started.flatMap((segment, index) => (insertedIds[index] && (segment.entryBoundAt !== null || segment.exitBoundAt !== null) ? [{ id: insertedIds[index]!, entryBoundAt: segment.entryBoundAt, exitBoundAt: segment.exitBoundAt }] : []));
+        if (advance.openExitBoundAt !== null && state.openEncounterId) boundUpdates.push({ id: state.openEncounterId, entryBoundAt: null, exitBoundAt: advance.openExitBoundAt });
+        if (boundUpdates.length > 0) await recordEncounterBounds(db, boundUpdates);
         result.aircraft += 1;
         result.started += advance.started.length;
         if (advance.continued) result.continued += 1;
@@ -292,23 +309,44 @@ async function applyAdvance(db: Queryable, userId: string, icao24: string, area:
  */
 export async function recordClosestPoints(db: Queryable, updates: readonly { id: string; distanceNm: number; point: ClosestPoint }[]): Promise<void> {
   const payload = updates.map(({ id, distanceNm, point }) => ({
-    id, dist: distanceNm, at: ts(point.at), lat: point.latitude, lon: point.longitude,
+    id, dist: distanceNm, at: ts(point.at), lat: point.latitude, lon: point.longitude, clat: point.centerLatitude, clon: point.centerLongitude,
     alt: point.altitudeFt, alt_src: point.altitudeSource, gs: point.groundSpeedKt, trk: point.trackDeg, vr: point.verticalRateFpm, gnd: point.onGround,
   }));
   try {
     await db.query(
       `update airintel_private.encounters e
           set closest_at = u.at, closest_latitude = u.lat, closest_longitude = u.lon,
+              closest_center_latitude = u.clat, closest_center_longitude = u.clon,
               closest_altitude_ft = u.alt, closest_altitude_source = u.alt_src, closest_ground_speed_kt = u.gs,
               closest_track_deg = u.trk, closest_vertical_rate_fpm = u.vr, closest_on_ground = u.gnd,
               closest_point_basis = 'at_write'
          from jsonb_to_recordset($1::jsonb) as u(id uuid, dist double precision, at timestamptz, lat double precision, lon double precision,
-              alt double precision, alt_src text, gs double precision, trk double precision, vr double precision, gnd boolean)
+              clat double precision, clon double precision, alt double precision, alt_src text, gs double precision, trk double precision, vr double precision, gnd boolean)
         where e.id = u.id and (e.closest_at is null or u.dist <= e.closest_approach_nm + 1e-9)`,
       [JSON.stringify(payload)],
     );
   } catch (error) {
     if ((error as { code?: unknown } | null)?.code !== "42703") log("warn", "encounter_closest_point_failed", errorFields(error));
+  }
+}
+
+/**
+ * Best-effort write of the outside observations that bound an encounter's entry and exit (migration 0009). Never moves
+ * a bound once set; a database without the columns still logs encounters (the bounds are skipped).
+ */
+export async function recordEncounterBounds(db: Queryable, updates: readonly { id: string; entryBoundAt: number | null; exitBoundAt: number | null }[]): Promise<void> {
+  const payload = updates.map(({ id, entryBoundAt, exitBoundAt }) => ({ id, entry: entryBoundAt === null ? null : ts(entryBoundAt), exit: exitBoundAt === null ? null : ts(exitBoundAt) }));
+  try {
+    await db.query(
+      `update airintel_private.encounters e
+          set last_outside_before_entry_at = coalesce(e.last_outside_before_entry_at, case when u.entry <= e.entered_at then u.entry end),
+              first_outside_after_exit_at = coalesce(e.first_outside_after_exit_at, case when u.exit >= e.last_seen_in_radius_at then u.exit end)
+         from jsonb_to_recordset($1::jsonb) as u(id uuid, entry timestamptz, exit timestamptz)
+        where e.id = u.id`,
+      [JSON.stringify(payload)],
+    );
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code !== "42703") log("warn", "encounter_bounds_failed", errorFields(error));
   }
 }
 

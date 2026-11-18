@@ -73,8 +73,8 @@ describe("visits list (netted-visits-v1)", () => {
   it("exposes each entry with entered / last-seen-in-radius / closest approach, chronologically", () => {
     const [summary] = run([obs("abc123", 0, 2), obs("abc123", 1, 1), obs("abc123", 2, 9), obs("abc123", 30, 3), obs("abc123", 31, 5)]);
     expect(summary!.visits).toEqual([
-      { enteredAt: t(0), lastSeenInRadiusAt: t(1), closestApproachNm: expect.closeTo(1, 2), observationCount: 2, closest: expect.objectContaining({ at: t(1), basis: "window" }) },
-      { enteredAt: t(30), lastSeenInRadiusAt: t(31), closestApproachNm: expect.closeTo(3, 2), observationCount: 2, closest: expect.objectContaining({ at: t(30), basis: "window" }) },
+      { enteredAt: t(0), lastSeenInRadiusAt: t(1), closestApproachNm: expect.closeTo(1, 2), observationCount: 2, closest: expect.objectContaining({ at: t(1), basis: "window" }), enteredAfter: null, exitedBefore: t(2) },
+      { enteredAt: t(30), lastSeenInRadiusAt: t(31), closestApproachNm: expect.closeTo(3, 2), observationCount: 2, closest: expect.objectContaining({ at: t(30), basis: "window" }), enteredAfter: null, exitedBefore: null },
     ]);
     expect(summary!.visits).toHaveLength(summary!.visitCount);
   });

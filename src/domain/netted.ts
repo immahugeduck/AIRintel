@@ -89,6 +89,9 @@ export type RadiusVisit = {
   observationCount: number;
   /** Flight state at the closest recorded observation of this visit. */
   closest?: ClosestPoint | undefined;
+  /** Last observation outside the radius before entry / first after leaving, within the gap (Observed); null = Unknown. */
+  enteredAfter?: string | null | undefined;
+  exitedBefore?: string | null | undefined;
 };
 
 export type NettedAircraftSummary = {
@@ -133,7 +136,8 @@ export function countRadiusVisits(observations: readonly VisitObservation[], opt
         const stamp = new Date(time).toISOString();
         if (startsVisit) {
           summary.visitCount += 1;
-          summary.visits.push({ enteredAt: stamp, lastSeenInRadiusAt: stamp, closestApproachNm: distance, observationCount: 0, closest: closestPointFrom(observation, options, "window") });
+          const enteredAfter = previous !== null && !previous.inside && time - previous.time <= gapMs ? new Date(previous.time).toISOString() : null;
+          summary.visits.push({ enteredAt: stamp, lastSeenInRadiusAt: stamp, closestApproachNm: distance, observationCount: 0, closest: closestPointFrom(observation, options, "window"), enteredAfter, exitedBefore: null });
         }
         const visit = summary.visits[summary.visits.length - 1]!;
         visit.lastSeenInRadiusAt = stamp;
@@ -144,6 +148,9 @@ export function countRadiusVisits(observations: readonly VisitObservation[], opt
         // Latest non-empty identity values observed inside the radius.
         if (observation.callsign?.trim()) summary.callsign = observation.callsign.trim();
         if (observation.registration?.trim()) summary.registration = observation.registration.trim();
+      } else if (summary && previous?.inside && time - previous.time <= gapMs) {
+        // Leaving: this outside observation bounds the exit of the visit that just ended.
+        summary.visits[summary.visits.length - 1]!.exitedBefore = new Date(time).toISOString();
       }
       previous = { time, inside };
     }
@@ -179,6 +186,15 @@ export const radiusVisitSchema = z.object({
   centerLongitude: z.number().finite().min(-180).max(180).nullish(),
   /** Flight state at the closest recorded point. Null when unknown (older entries whose positions were purged); older servers omit it. */
   closest: closestPointSchema.nullish(),
+  /**
+   * Timing bounds (Observed): the last sighting outside the radius before this entry and the first sighting outside
+   * after it, when within the reception gap. Real time inside lies between lastSeenInRadiusAt − enteredAt and
+   * exitedBefore − enteredAfter. Null = Unknown; older servers omit them.
+   */
+  enteredAfter: utc.nullish(),
+  exitedBefore: utc.nullish(),
+  /** Radius this entry was measured against (statute miles). Older servers omit it. */
+  radiusMi: z.number().finite().positive().nullish(),
 });
 export type NettedVisit = z.infer<typeof radiusVisitSchema>;
 
@@ -247,6 +263,8 @@ export const toNettedDto = (summary: NettedAircraftSummary, aircraftTypeCode: st
     closestMi: nmToMiles(visit.closestApproachNm),
     observationCount: visit.observationCount,
     closest: visit.closest ?? null,
+    enteredAfter: visit.enteredAfter ?? null,
+    exitedBefore: visit.exitedBefore ?? null,
   })),
 });
 
