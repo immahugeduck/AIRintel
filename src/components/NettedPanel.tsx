@@ -3,10 +3,12 @@ import { useState } from "react";
 import { ProfileNotFoundError, fetchAircraftProfile } from "../api/profile";
 import type { NetStatus } from "../domain/net";
 import { registryAvailabilityNotice } from "../domain/profile";
-import { downloadText, nettedFilename, nettedToCsv, nettedToJson } from "../lib/netted-export";
+import { downloadText, nettedEntriesToCsv, nettedFilename, nettedToCsv, nettedToJson } from "../lib/netted-export";
 import type { NettedAircraft, NettedVisit } from "../domain/netted";
 import { PATTERN_TIER_LABEL, PATTERN_TIER_ORDER, type PatternAssessment } from "../domain/patterns";
-import { formatLastSeen } from "../domain/units";
+import { formatAltitudeFt, formatLastSeen, formatSpeedMph } from "../domain/units";
+import { compassPoint } from "../domain/geometry";
+import { COMPARE_MIN_ENTRIES, passFlags, typicalPass, type PassFlag, type TypicalPass } from "../domain/encounter-compare";
 import { AccessDeniedError, AuthenticationRequiredError, ProviderNotConfiguredError } from "../providers/contracts";
 import { formatRadius } from "./AircraftList";
 import { NetStatusLine } from "./NetControl";
@@ -87,6 +89,7 @@ export function VisitTimeline({ item, timeZone, newSince, defaultOpen }: { item:
   if (visits.length === 0) return null;
   const shown = all ? visits : visits.slice(0, VISIBLE_VISITS);
   const listId = `visits-${item.icao24}`;
+  const typical = typicalPass(visits);
   return (
     <div className="visit-log">
       <button type="button" className="disclosure" aria-expanded={open} aria-controls={listId} onClick={() => setOpen(!open)}>
@@ -94,6 +97,7 @@ export function VisitTimeline({ item, timeZone, newSince, defaultOpen }: { item:
       </button>
       {open && (
         <>
+          <TypicalPassLine typical={typical} />
           <ol id={listId} className="visit-timeline" aria-label={`Entries into the radius for ${item.callsign ?? item.icao24.toUpperCase()}`}>
             {shown.map((visit, index) => {
               const isNew = Boolean(newSince) && Date.parse(visit.enteredAt) > Date.parse(newSince!);
@@ -105,6 +109,7 @@ export function VisitTimeline({ item, timeZone, newSince, defaultOpen }: { item:
                     <span className="visit-detail">
                       Entry {item.visitCount - index} · {describeStay(visit)} · closest {visit.closestMi.toFixed(1)} mi
                     </span>
+                    <ClosestPointLine visit={visit} timeZone={timeZone} flags={passFlags(visit, typical)} />
                   </div>
                 </li>
               );
@@ -117,6 +122,48 @@ export function VisitTimeline({ item, timeZone, newSince, defaultOpen }: { item:
         </>
       )}
     </div>
+  );
+}
+
+const FLAG_LABEL: Record<PassFlag, string> = { closer: "Closer than usual", lower: "Lower than usual", longer: "Longer than usual" };
+
+const clockTime = (iso: string, timeZone?: string) =>
+  new Intl.DateTimeFormat("en-US", { ...(timeZone ? { timeZone } : {}), hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date(iso)).toLowerCase().replace(" ", "");
+
+/** Flight state at the closest recorded point of one entry (Observed) plus comparison flags (Calculated). */
+export function ClosestPointLine({ visit, timeZone, flags = [] }: { visit: NettedVisit; timeZone?: string | undefined; flags?: PassFlag[] }) {
+  const point = visit.closest;
+  if (!point) return <span className="visit-closest fine-print">Closest-point details not recorded for this entry.</span>;
+  const parts = [
+    formatAltitudeFt(point.altitudeFt, point.onGround),
+    formatSpeedMph(point.groundSpeedKt),
+    point.trackDeg !== null ? `heading ${compassPoint(point.trackDeg)}` : null,
+    point.bearingFromCenterDeg !== null ? `${visit.closestMi.toFixed(1)} mi ${compassPoint(point.bearingFromCenterDeg)} of center` : null,
+    `at ${clockTime(point.at, timeZone)}`,
+  ].filter(Boolean);
+  return (
+    <span className="visit-closest">
+      <span className="visit-closest-label">At closest:</span> {parts.join(" · ")}
+      {flags.map((flag) => <span key={flag} className="pass-flag">{FLAG_LABEL[flag]}</span>)}
+    </span>
+  );
+}
+
+/** Median pass for this aircraft over your location, shown once it has enough entries to compare. */
+function TypicalPassLine({ typical }: { typical: TypicalPass }) {
+  if (typical.entries < 2) return null;
+  const minutes = typical.minutesInside;
+  const parts = [
+    typical.closestMi !== null ? `closest ${typical.closestMi.toFixed(1)} mi` : null,
+    typical.altitudeFt !== null ? `${Math.round(typical.altitudeFt).toLocaleString("en-US")} ft` : null,
+    typical.speedMph !== null ? `${Math.round(typical.speedMph)} mph` : null,
+    minutes !== null ? (minutes < 1 ? "inside under 1 min" : `inside ${Math.round(minutes)} min`) : null,
+  ].filter(Boolean);
+  return (
+    <p className="typical-pass fine-print">
+      <strong>Typical pass</strong> (median of {typical.entries} entries with details): {parts.join(" · ")}
+      {typical.entries < COMPARE_MIN_ENTRIES && ` · comparison flags start at ${COMPARE_MIN_ENTRIES} entries`}
+    </p>
   );
 }
 
@@ -160,6 +207,7 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
           <div className="netted-export">
             <span className="hint">{totalVisits} {totalVisits === 1 ? "entry" : "entries"}</span>
             <button type="button" className="button button-ghost" aria-label="Export netted list as CSV" onClick={() => downloadText(nettedFilename("csv"), nettedToCsv(aircraft), "text/csv;charset=utf-8")}>CSV</button>
+            <button type="button" className="button button-ghost" aria-label="Export every entry with closest-point details as CSV" onClick={() => downloadText(nettedFilename("csv", new Date(), "entries"), nettedEntriesToCsv(aircraft), "text/csv;charset=utf-8")}>Entries CSV</button>
             <button type="button" className="button button-ghost" aria-label="Export netted list as JSON" onClick={() => downloadText(nettedFilename("json"), nettedToJson(aircraft, { radiusMi, scope: lifetime ? "all-time log" : state.kind === "ready" ? `last ${state.hours} h` : "this visit" }), "application/json")}>JSON</button>
           </div>
         )}

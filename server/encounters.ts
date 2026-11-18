@@ -24,12 +24,40 @@ import { errorFields, log } from "./logger.js";
 export type CenterMode = "follow" | "fixed";
 export type EncounterArea = { latitude: number; longitude: number; radiusNm: number; centerMode?: CenterMode | undefined };
 export type EncounterSource = "live" | "sweep";
-export type EncounterObservation = { icao24: string; observedAt: string; latitude: number; longitude: number; callsign?: string | null | undefined; registration?: string | null | undefined };
+export type AltitudeSource = "geometric" | "barometric" | "provider";
+export type EncounterObservation = {
+  icao24: string; observedAt: string; latitude: number; longitude: number; callsign?: string | null | undefined; registration?: string | null | undefined;
+  /** Flight state as reported by the provider (Observed). Absent/null = Unknown. */
+  altitudeFt?: number | null | undefined; altitudeSource?: AltitudeSource | null | undefined; groundSpeedKt?: number | null | undefined;
+  trackDeg?: number | null | undefined; verticalRateFpm?: number | null | undefined; onGround?: boolean | null | undefined;
+};
+
+/**
+ * The recorded observation that was nearest the watch center during an encounter (migration 0008), exactly as the
+ * provider reported it. Only real samples are used: with 1-minute sampling the true closest moment can fall between
+ * two samples, so this is "closest recorded position", never an interpolated point.
+ */
+export type ClosestPoint = {
+  at: number; latitude: number; longitude: number;
+  altitudeFt: number | null; altitudeSource: AltitudeSource | null; groundSpeedKt: number | null;
+  trackDeg: number | null; verticalRateFpm: number | null; onGround: boolean | null;
+};
+
+const num = (value: number | null | undefined) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+const snapshot = (o: EncounterObservation, at: number): ClosestPoint => {
+  const altitudeFt = num(o.altitudeFt);
+  return {
+    at, latitude: o.latitude, longitude: o.longitude,
+    altitudeFt, altitudeSource: altitudeFt === null ? null : o.altitudeSource ?? null,
+    groundSpeedKt: num(o.groundSpeedKt), trackDeg: num(o.trackDeg), verticalRateFpm: num(o.verticalRateFpm),
+    onGround: typeof o.onGround === "boolean" ? o.onGround : null,
+  };
+};
 
 /** Detection state carried between batches (one tally row). */
 export type EncounterState = { lastObservedAt: number | null; lastInside: boolean; openEncounterId: string | null };
 
-export type EncounterSegment = { enteredAt: number; lastSeenAt: number; closestNm: number; observationCount: number; callsign: string | null; registration: string | null };
+export type EncounterSegment = { enteredAt: number; lastSeenAt: number; closestNm: number; closest: ClosestPoint; observationCount: number; callsign: string | null; registration: string | null };
 
 export type EncounterAdvance = {
   /** Observations folded into the already-open encounter (null when none). */
@@ -66,20 +94,20 @@ export function advanceEncounters(state: EncounterState, observations: readonly 
       const starts = previous === null || !previous.inside || time - previous.time > gapMs;
       if (starts) {
         if (current === "open") closesOpen = true;
-        current = { enteredAt: time, lastSeenAt: time, closestNm: distance, observationCount: 0, callsign: null, registration: null };
+        current = { enteredAt: time, lastSeenAt: time, closestNm: distance, closest: snapshot(observation, time), observationCount: 0, callsign: null, registration: null };
         result.started.push(current);
       }
       if (current === "open") {
-        const continued = result.continued ?? { lastSeenAt: time, closestNm: distance, observationCount: 0, callsign: null, registration: null };
+        const continued = result.continued ?? { lastSeenAt: time, closestNm: distance, closest: snapshot(observation, time), observationCount: 0, callsign: null, registration: null };
         continued.lastSeenAt = time;
-        continued.closestNm = Math.min(continued.closestNm, distance);
+        if (distance < continued.closestNm) { continued.closestNm = distance; continued.closest = snapshot(observation, time); }
         continued.observationCount += 1;
         continued.callsign = clip(observation.callsign) ?? continued.callsign;
         continued.registration = clip(observation.registration) ?? continued.registration;
         result.continued = continued;
       } else if (current) {
         current.lastSeenAt = time;
-        current.closestNm = Math.min(current.closestNm, distance);
+        if (distance < current.closestNm) { current.closestNm = distance; current.closest = snapshot(observation, time); }
         current.observationCount += 1;
         current.callsign = clip(observation.callsign) ?? current.callsign;
         current.registration = clip(observation.registration) ?? current.registration;
@@ -138,6 +166,9 @@ export async function recordEncounters(db: Queryable, userId: string, area: Enco
         // the watermark past observations whose encounters were not saved (the next batch retries them).
         const insertedIds = await withTransaction(db, (tx) => applyAdvance(tx, userId, icao24, area, source, tally, state, advance));
         if (area.centerMode && insertedIds.length > 0) await tagCenterMode(db, insertedIds, area.centerMode);
+        const closestUpdates = advance.started.flatMap((segment, index) => (insertedIds[index] ? [{ id: insertedIds[index]!, distanceNm: segment.closestNm, point: segment.closest }] : []));
+        if (advance.continued && state.openEncounterId) closestUpdates.push({ id: state.openEncounterId, distanceNm: advance.continued.closestNm, point: advance.continued.closest });
+        if (closestUpdates.length > 0) await recordClosestPoints(db, closestUpdates);
         result.aircraft += 1;
         result.started += advance.started.length;
         if (advance.continued) result.continued += 1;
@@ -251,6 +282,34 @@ async function applyAdvance(db: Queryable, userId: string, icao24: string, area:
       openId],
   );
   return insertedIds;
+}
+
+/**
+ * Best-effort write of each encounter's closest recorded point (migration 0008). Like tagCenterMode it runs after the
+ * encounter transaction commits, so a database without the columns still logs encounters. A snapshot replaces the
+ * stored one only when it is at least as close as the encounter's (already updated) closest distance, so a later,
+ * farther batch never overwrites the true closest sample and overlapping writers converge on the same point.
+ */
+export async function recordClosestPoints(db: Queryable, updates: readonly { id: string; distanceNm: number; point: ClosestPoint }[]): Promise<void> {
+  const payload = updates.map(({ id, distanceNm, point }) => ({
+    id, dist: distanceNm, at: ts(point.at), lat: point.latitude, lon: point.longitude,
+    alt: point.altitudeFt, alt_src: point.altitudeSource, gs: point.groundSpeedKt, trk: point.trackDeg, vr: point.verticalRateFpm, gnd: point.onGround,
+  }));
+  try {
+    await db.query(
+      `update airintel_private.encounters e
+          set closest_at = u.at, closest_latitude = u.lat, closest_longitude = u.lon,
+              closest_altitude_ft = u.alt, closest_altitude_source = u.alt_src, closest_ground_speed_kt = u.gs,
+              closest_track_deg = u.trk, closest_vertical_rate_fpm = u.vr, closest_on_ground = u.gnd,
+              closest_point_basis = 'at_write'
+         from jsonb_to_recordset($1::jsonb) as u(id uuid, dist double precision, at timestamptz, lat double precision, lon double precision,
+              alt double precision, alt_src text, gs double precision, trk double precision, vr double precision, gnd boolean)
+        where e.id = u.id and (e.closest_at is null or u.dist <= e.closest_approach_nm + 1e-9)`,
+      [JSON.stringify(payload)],
+    );
+  } catch (error) {
+    if ((error as { code?: unknown } | null)?.code !== "42703") log("warn", "encounter_closest_point_failed", errorFields(error));
+  }
 }
 
 /**
