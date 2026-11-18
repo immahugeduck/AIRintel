@@ -3,10 +3,12 @@ import { useState } from "react";
 import { ProfileNotFoundError, fetchAircraftProfile } from "../api/profile";
 import type { NetStatus } from "../domain/net";
 import { registryAvailabilityNotice } from "../domain/profile";
-import { downloadText, nettedFilename, nettedToCsv, nettedToJson } from "../lib/netted-export";
+import { downloadText, nettedEntriesToCsv, nettedFilename, nettedToCsv, nettedToJson } from "../lib/netted-export";
 import type { NettedAircraft, NettedVisit } from "../domain/netted";
 import { PATTERN_TIER_LABEL, PATTERN_TIER_ORDER, type PatternAssessment } from "../domain/patterns";
-import { formatLastSeen } from "../domain/units";
+import { formatAltitudeFt, formatLastSeen, formatSpeedMph } from "../domain/units";
+import { compassPoint } from "../domain/geometry";
+import { COMPARE_MIN_ENTRIES, passFlags, straightPassMinutes, timeInside, typicalPass, type PassFlag, type TypicalPass } from "../domain/encounter-compare";
 import { AccessDeniedError, AuthenticationRequiredError, ProviderNotConfiguredError } from "../providers/contracts";
 import { formatRadius } from "./AircraftList";
 import { NetStatusLine } from "./NetControl";
@@ -80,13 +82,14 @@ export function PatternReasons({ pattern }: { pattern: PatternAssessment }) {
 }
 
 /** Per-visit timeline: every time the aircraft entered the radius, newest first (Observed). */
-export function VisitTimeline({ item, timeZone, newSince, defaultOpen }: { item: NettedAircraft; timeZone?: string | undefined; newSince?: string | null | undefined; defaultOpen: boolean }) {
+export function VisitTimeline({ item, timeZone, newSince, defaultOpen, radiusMi }: { item: NettedAircraft; timeZone?: string | undefined; newSince?: string | null | undefined; defaultOpen: boolean; radiusMi?: number | undefined }) {
   const [open, setOpen] = useState(defaultOpen);
   const [all, setAll] = useState(false);
   const visits: NettedVisit[] = item.visits;
   if (visits.length === 0) return null;
   const shown = all ? visits : visits.slice(0, VISIBLE_VISITS);
   const listId = `visits-${item.icao24}`;
+  const typical = typicalPass(visits);
   return (
     <div className="visit-log">
       <button type="button" className="disclosure" aria-expanded={open} aria-controls={listId} onClick={() => setOpen(!open)}>
@@ -94,6 +97,7 @@ export function VisitTimeline({ item, timeZone, newSince, defaultOpen }: { item:
       </button>
       {open && (
         <>
+          <TypicalPassLine typical={typical} />
           <ol id={listId} className="visit-timeline" aria-label={`Entries into the radius for ${item.callsign ?? item.icao24.toUpperCase()}`}>
             {shown.map((visit, index) => {
               const isNew = Boolean(newSince) && Date.parse(visit.enteredAt) > Date.parse(newSince!);
@@ -105,6 +109,7 @@ export function VisitTimeline({ item, timeZone, newSince, defaultOpen }: { item:
                     <span className="visit-detail">
                       Entry {item.visitCount - index} · {describeStay(visit)} · closest {visit.closestMi.toFixed(1)} mi
                     </span>
+                    <ClosestPointLine visit={visit} timeZone={timeZone} flags={passFlags(visit, typical, radiusMi)} radiusMi={radiusMi} />
                   </div>
                 </li>
               );
@@ -120,11 +125,66 @@ export function VisitTimeline({ item, timeZone, newSince, defaultOpen }: { item:
   );
 }
 
-/** "seen once" / "seen inside for 3 min" - only what the recorded observations support (no interpolation). */
+const FLAG_LABEL: Record<PassFlag, string> = { closer: "Closer than usual", lower: "Lower than usual", longer: "Longer than usual", lingered: "Lingered (3× a straight pass)" };
+
+const clockTime = (iso: string, timeZone?: string) =>
+  new Intl.DateTimeFormat("en-US", { ...(timeZone ? { timeZone } : {}), hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date(iso)).toLowerCase().replace(" ", "");
+
+/** Flight state at the closest recorded point of one entry (Observed) plus comparison flags (Calculated). */
+export function ClosestPointLine({ visit, timeZone, flags = [], radiusMi }: { visit: NettedVisit; timeZone?: string | undefined; flags?: PassFlag[]; radiusMi?: number | undefined }) {
+  const point = visit.closest;
+  if (!point) return <span className="visit-closest fine-print">Closest-point details not recorded for this entry.</span>;
+  const parts = [
+    formatAltitudeFt(point.altitudeFt, point.onGround),
+    formatSpeedMph(point.groundSpeedKt),
+    point.trackDeg !== null ? `heading ${compassPoint(point.trackDeg)}` : null,
+    point.bearingFromCenterDeg !== null ? `${visit.closestMi.toFixed(1)} mi ${compassPoint(point.bearingFromCenterDeg)} of center` : null,
+    `at ${clockTime(point.at, timeZone)}`,
+  ].filter(Boolean);
+  const straight = straightPassMinutes(visit, visit.radiusMi ?? radiusMi);
+  if (straight !== null) parts.push(`a straight pass at this speed takes ${straight < 1 ? "under 1" : `about ${Math.round(straight)}`} min`);
+  return (
+    <span className="visit-closest">
+      <span className="visit-closest-label">At closest:</span> {parts.join(" · ")}
+      {flags.map((flag) => <span key={flag} className="pass-flag">{FLAG_LABEL[flag]}</span>)}
+    </span>
+  );
+}
+
+/** Median pass for this aircraft over your location, shown once it has enough entries to compare. */
+function TypicalPassLine({ typical }: { typical: TypicalPass }) {
+  if (typical.entries < 2) return null;
+  const minutes = typical.minutesInside;
+  const parts = [
+    typical.closestMi !== null ? `closest ${typical.closestMi.toFixed(1)} mi` : null,
+    typical.altitudeFt !== null ? `${Math.round(typical.altitudeFt).toLocaleString("en-US")} ft` : null,
+    typical.speedMph !== null ? `${Math.round(typical.speedMph)} mph` : null,
+    minutes !== null ? (minutes < 1 ? "inside under 1 min" : `inside ${Math.round(minutes)} min`) : null,
+  ].filter(Boolean);
+  return (
+    <p className="typical-pass fine-print">
+      <strong>Typical pass</strong> (median of {typical.entries} entries with details): {parts.join(" · ")}
+      {typical.entries < COMPARE_MIN_ENTRIES && ` · comparison flags start at ${COMPARE_MIN_ENTRIES} entries`}
+    </p>
+  );
+}
+
+/**
+ * Time inside, only as precisely as the recorded sightings support (no interpolation): a range when the sightings just
+ * outside the radius on both sides are known ("inside 4–6 min"), otherwise a lower bound ("inside at least 4 min").
+ */
 export function describeStay(visit: NettedVisit): string {
-  const minutes = Math.round((Date.parse(visit.lastSeenInRadiusAt) - Date.parse(visit.enteredAt)) / 60_000);
-  if (visit.observationCount <= 1 || minutes < 1) return visit.observationCount <= 1 ? "seen once inside" : `${visit.observationCount} sightings inside`;
-  return `observed inside for ${minutes} min`;
+  const { atLeast, atMost } = timeInside(visit);
+  const fmt = (minutes: number) => (minutes < 1 ? "under 1" : String(Math.round(minutes)));
+  if (atMost !== null) {
+    const low = fmt(atLeast);
+    const high = fmt(atMost);
+    if (low === high) return high === "under 1" ? "inside under 1 min" : `inside about ${high} min`;
+    return atLeast < 1 ? `inside up to ${high} min` : `inside ${low}–${high} min`;
+  }
+  if (visit.observationCount <= 1) return "seen once inside";
+  if (atLeast < 1) return `${visit.observationCount} sightings inside`;
+  return `inside at least ${fmt(atLeast)} min`;
 }
 
 const reasonCopy: Record<Extract<NettedState, { kind: "session" }>["reason"], string> = {
@@ -160,6 +220,7 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
           <div className="netted-export">
             <span className="hint">{totalVisits} {totalVisits === 1 ? "entry" : "entries"}</span>
             <button type="button" className="button button-ghost" aria-label="Export netted list as CSV" onClick={() => downloadText(nettedFilename("csv"), nettedToCsv(aircraft), "text/csv;charset=utf-8")}>CSV</button>
+            <button type="button" className="button button-ghost" aria-label="Export every entry with closest-point details as CSV" onClick={() => downloadText(nettedFilename("csv", new Date(), "entries"), nettedEntriesToCsv(aircraft, radiusMi), "text/csv;charset=utf-8")}>Entries CSV</button>
             <button type="button" className="button button-ghost" aria-label="Export netted list as JSON" onClick={() => downloadText(nettedFilename("json"), nettedToJson(aircraft, { radiusMi, scope: lifetime ? "all-time log" : state.kind === "ready" ? `last ${state.hours} h` : "this visit" }), "application/json")}>JSON</button>
           </div>
         )}
@@ -228,7 +289,7 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
                   <div><dt>Closest</dt><dd className="mono">{item.closestApproachMi.toFixed(1)} mi</dd></div>
                 </dl>
                 {item.pattern && <PatternReasons pattern={item.pattern} />}
-                <VisitTimeline item={item} timeZone={timeZone} newSince={newSince} defaultOpen={drawer} />
+                <VisitTimeline item={item} timeZone={timeZone} newSince={newSince} defaultOpen={drawer} radiusMi={radiusMi} />
                 <button type="button" className="disclosure" aria-expanded={open} aria-controls={`desc-${item.icao24}`} onClick={() => setExpanded(open ? null : item.icao24)}>
                   {open ? "Hide description" : "Aircraft description"}
                 </button>

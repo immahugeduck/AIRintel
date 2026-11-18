@@ -20,3 +20,19 @@ export function watchAreaBounds(latitude: number, longitude: number, radiusNm: n
     : degrees(Math.asin(Math.min(1, Math.sin(angle) / Math.cos(radians(latitude)))));
   return [[south, longitude - longitudeDelta], [north, longitude + longitudeDelta]];
 }
+
+/** Initial great-circle bearing from point 1 to point 2, degrees true in [0, 360). */
+export function bearingDeg(latitude1: number, longitude1: number, latitude2: number, longitude2: number): number {
+  const phi1 = radians(latitude1);
+  const phi2 = radians(latitude2);
+  const deltaLambda = radians(longitude2 - longitude1);
+  const y = Math.sin(deltaLambda) * Math.cos(phi2);
+  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda);
+  return (degrees(Math.atan2(y, x)) + 360) % 360;
+}
+
+const COMPASS_POINTS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] as const;
+/** 8-point compass label for a bearing in degrees ("NE"). */
+export function compassPoint(bearing: number): (typeof COMPASS_POINTS)[number] {
+  return COMPASS_POINTS[Math.round((((bearing % 360) + 360) % 360) / 45) % 8]!;
+}

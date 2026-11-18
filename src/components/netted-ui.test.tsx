@@ -18,7 +18,11 @@ describe("describeStay", () => {
   it("only claims what the observations support", () => {
     expect(describeStay(visit(10, 0, 1, 1))).toBe("seen once inside");
     expect(describeStay(visit(10, 0, 1, 3))).toBe("3 sightings inside");
-    expect(describeStay(visit(10, 4, 1, 5))).toBe("observed inside for 4 min");
+    expect(describeStay(visit(10, 4, 1, 5))).toBe("inside at least 4 min");
+    const bounded = (lead: number, stay: number, tail: number) => ({ ...visit(10, stay, 1, 3), enteredAfter: new Date(Date.parse(visit(10, stay, 1, 3).enteredAt) - lead * 60_000).toISOString(), exitedBefore: new Date(Date.parse(visit(10, stay, 1, 3).lastSeenInRadiusAt) + tail * 60_000).toISOString() });
+    expect(describeStay(bounded(1, 4, 1))).toBe("inside 4–6 min");
+    expect(describeStay(bounded(0.5, 0, 0.6))).toBe("inside up to 1 min");
+    expect(describeStay(bounded(0.2, 0, 0.2))).toBe("inside under 1 min");
   });
 });
 

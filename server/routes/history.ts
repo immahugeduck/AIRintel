@@ -4,7 +4,7 @@ import { z } from "zod";
 import { distanceNm } from "../../src/domain/geometry.js";
 import { MAX_CONTROL_AREAS, controlAreaInputSchema, watchAreaInputSchema } from "../../src/domain/net.js";
 import { ControlTooCloseError, deleteControlArea, listControlAreas, upsertControlArea } from "../control-areas.js";
-import { MAX_VISITS_PER_AIRCRAFT, NETTED_ALGORITHM_VERSION, countRadiusVisits, nettedQuerySchema, toNettedDto, type NettedAircraft, type VisitObservation } from "../../src/domain/netted.js";
+import { MAX_VISITS_PER_AIRCRAFT, NETTED_ALGORITHM_VERSION, closestPointFrom, countRadiusVisits, nettedQuerySchema, toNettedDto, type ClosestPoint, type NettedAircraft, type VisitObservation } from "../../src/domain/netted.js";
 import { VISIT_GAP_MINUTES, milesToMeters, milesToNm, nmToMiles } from "../../src/domain/units.js";
 import { iso, type Queryable } from "../db.js";
 import type { AppVariables } from "../http.js";
@@ -27,6 +27,37 @@ async function findAircraft(db: Queryable, icao24: string) {
 }
 
 type AnalysisPosition = { source_id: string; latitude: number; longitude: number; altitude_ft: number | null; ground_speed_kt: number | null; observed_at: Date };
+
+type LogEncounterRow = {
+  icao24: string; entered_at: Date; last_seen_in_radius_at: Date; closest_approach_nm: number; observation_count: number;
+  center_latitude: number | null; center_longitude: number | null;
+  closest_at?: Date | null; closest_latitude?: number | null; closest_longitude?: number | null; closest_altitude_ft?: number | null;
+  closest_altitude_source?: string | null; closest_ground_speed_kt?: number | null; closest_track_deg?: number | null;
+  closest_vertical_rate_fpm?: number | null; closest_on_ground?: boolean | null; closest_point_basis?: string | null;
+  radius_nm?: number | null; closest_center_latitude?: number | null; closest_center_longitude?: number | null;
+  last_outside_before_entry_at?: Date | null; first_outside_after_exit_at?: Date | null;
+};
+const CLOSEST_COLUMNS = `, closest_at, closest_latitude, closest_longitude, closest_altitude_ft, closest_altitude_source, closest_ground_speed_kt,
+       closest_track_deg, closest_vertical_rate_fpm, closest_on_ground, closest_point_basis`;
+const TIMING_COLUMNS = `, closest_center_latitude, closest_center_longitude, last_outside_before_entry_at, first_outside_after_exit_at`;
+const ALTITUDE_SOURCES = new Set(["geometric", "barometric", "provider"]);
+
+/** Encounter row -> closest-point DTO; null when the snapshot is unknown (purged positions, pre-0008 database). */
+function closestFromRow(row: LogEncounterRow): ClosestPoint | null {
+  if (!row.closest_at || row.closest_latitude == null || row.closest_longitude == null) return null;
+  const observed: VisitObservation = {
+    icao24: row.icao24, observedAt: iso(row.closest_at)!, latitude: row.closest_latitude, longitude: row.closest_longitude,
+    altitudeFt: row.closest_altitude_ft ?? null,
+    altitudeSource: row.closest_altitude_source && ALTITUDE_SOURCES.has(row.closest_altitude_source) ? row.closest_altitude_source as "geometric" | "barometric" | "provider" : null,
+    groundSpeedKt: row.closest_ground_speed_kt ?? null, trackDeg: row.closest_track_deg ?? null,
+    verticalRateFpm: row.closest_vertical_rate_fpm ?? null, onGround: row.closest_on_ground ?? null,
+  };
+  // Prefer the center in effect at the closest moment (follow me moves it during an encounter); fall back to the entry center.
+  const center = row.closest_center_latitude != null && row.closest_center_longitude != null ? { latitude: row.closest_center_latitude, longitude: row.closest_center_longitude }
+    : row.center_latitude != null && row.center_longitude != null ? { latitude: row.center_latitude, longitude: row.center_longitude } : null;
+  const point = closestPointFrom(observed, center ?? { latitude: row.closest_latitude, longitude: row.closest_longitude }, row.closest_point_basis === "backfill" ? "backfill" : "at_write");
+  return center ? point : { ...point, bearingFromCenterDeg: null };
+}
 
 export function historyRoutes(db: Queryable) {
   const app = new Hono<{ Variables: AppVariables }>();
@@ -209,14 +240,14 @@ export function historyRoutes(db: Queryable) {
       const rowLimit = 50_000;
       // Geography distances are spheroidal; the 1% pad keeps boundary aircraft in the candidate set and the
       // authoritative inside/outside decision is made by countRadiusVisits with the same haversine used everywhere else.
-      const { rows } = await db.query<{ icao24: string; registration: string | null; callsign: string | null; observation_registration: string | null; latitude: number; longitude: number; observed_at: Date; altitude_ft: number | null; ground_speed_kt: number | null; track_deg: number | null; vertical_rate_fpm: number | null; on_ground: boolean | null }>(
+      const { rows } = await db.query<{ icao24: string; registration: string | null; callsign: string | null; observation_registration: string | null; latitude: number; longitude: number; observed_at: Date; altitude_ft: number | null; altitude_source: "geometric" | "barometric" | "provider" | null; ground_speed_kt: number | null; track_deg: number | null; vertical_rate_fpm: number | null; on_ground: boolean | null }>(
         `with center as (select public.st_setsrid(public.st_makepoint($2::double precision, $1::double precision), 4326)::public.geography as point),
               hits as (
                 select distinct p.aircraft_id from public.aircraft_positions p, center
                  where p.observed_at >= $4::timestamptz and p.observed_at <= $5::timestamptz and public.st_dwithin(p.position, center.point, $3::double precision)
               )
          select a.icao24, a.registration, p.callsign, p.observation_registration, p.latitude, p.longitude, p.observed_at,
-                p.altitude_ft, p.ground_speed_kt, p.track_deg, p.vertical_rate_fpm, p.on_ground
+                p.altitude_ft, p.altitude_source, p.ground_speed_kt, p.track_deg, p.vertical_rate_fpm, p.on_ground
            from public.aircraft_positions p
            join hits h on h.aircraft_id = p.aircraft_id
            join public.aircraft a on a.id = p.aircraft_id, center
@@ -233,6 +264,12 @@ export function historyRoutes(db: Queryable) {
         longitude: row.longitude,
         callsign: row.callsign,
         registration: row.observation_registration ?? row.registration,
+        altitudeFt: row.altitude_ft,
+        altitudeSource: row.altitude_source,
+        groundSpeedKt: row.ground_speed_kt,
+        trackDeg: row.track_deg,
+        verticalRateFpm: row.vertical_rate_fpm,
+        onGround: row.on_ground,
       }));
       const summaries = countRadiusVisits(observations, { latitude: lat, longitude: lon, radiusNm, gapMinutes: VISIT_GAP_MINUTES }).slice(0, 500);
       const typeCodes = new Map<string, string>();
@@ -290,6 +327,27 @@ export function historyRoutes(db: Queryable) {
      * keyed by the verified JWT subject only. Returns null (caller falls back to the window view) when the log is
      * empty or not migrated yet.
      */
+    /** Newest MAX_VISITS_PER_AIRCRAFT encounters per aircraft, with the closest-point snapshot when migration 0008 is applied. */
+    async function loadLogEncounters(userId: string, icaos: string[]): Promise<LogEncounterRow[]> {
+      const run = (extra: string) => db.query<LogEncounterRow>(
+        `select icao24, entered_at, last_seen_in_radius_at, closest_approach_nm, observation_count, center_latitude, center_longitude, radius_nm${extra}
+           from (select e.*, row_number() over (partition by e.icao24 order by e.entered_at desc) as rn
+                   from airintel_private.encounters e where e.user_id = $1::uuid and e.icao24 = any($2::text[])) ranked
+          where rn <= $3
+          order by icao24, entered_at desc`,
+        [userId, icaos, MAX_VISITS_PER_AIRCRAFT],
+      );
+      // Newest schema first; each missing migration (0009, then 0008) drops its columns instead of failing the log.
+      for (const extra of [CLOSEST_COLUMNS + TIMING_COLUMNS, CLOSEST_COLUMNS, ""]) {
+        try {
+          return (await run(extra)).rows;
+        } catch (error) {
+          if ((error as { code?: unknown } | null)?.code !== "42703" || extra === "") throw error;
+        }
+      }
+      return [];
+    }
+
     async function savedLog(lat: number, lon: number, radiusMi: number, hours: number) {
       const userId = c.get("user").id;
       const limit = 500;
@@ -312,14 +370,7 @@ export function historyRoutes(db: Queryable) {
       const kept = tallies.slice(0, limit);
       const icaos = kept.map((row) => row.icao24);
       const [encounters, types] = await Promise.all([
-        db.query<{ icao24: string; entered_at: Date; last_seen_in_radius_at: Date; closest_approach_nm: number; observation_count: number; center_latitude: number | null; center_longitude: number | null }>(
-          `select icao24, entered_at, last_seen_in_radius_at, closest_approach_nm, observation_count, center_latitude, center_longitude
-             from (select e.*, row_number() over (partition by e.icao24 order by e.entered_at desc) as rn
-                     from airintel_private.encounters e where e.user_id = $1::uuid and e.icao24 = any($2::text[])) ranked
-            where rn <= $3
-            order by icao24, entered_at desc`,
-          [userId, icaos, MAX_VISITS_PER_AIRCRAFT],
-        ),
+        loadLogEncounters(userId, icaos),
         db.query<{ icao24: string; type_code: string | null }>(
           `select distinct on (a.icao24) a.icao24, nullif(trim(r.payload->>'t'), '') as type_code
              from public.aircraft a
@@ -331,9 +382,9 @@ export function historyRoutes(db: Queryable) {
         ).catch(() => ({ rows: [] as { icao24: string; type_code: string | null }[] })),
       ]);
       const visits = new Map<string, NettedAircraft["visits"]>();
-      for (const row of encounters.rows) {
+      for (const row of encounters) {
         const list = visits.get(row.icao24) ?? [];
-        list.push({ enteredAt: iso(row.entered_at)!, lastSeenInRadiusAt: iso(row.last_seen_in_radius_at)!, closestMi: nmToMiles(row.closest_approach_nm), observationCount: Math.max(1, row.observation_count), centerLatitude: row.center_latitude ?? null, centerLongitude: row.center_longitude ?? null });
+        list.push({ enteredAt: iso(row.entered_at)!, lastSeenInRadiusAt: iso(row.last_seen_in_radius_at)!, closestMi: nmToMiles(row.closest_approach_nm), observationCount: Math.max(1, row.observation_count), centerLatitude: row.center_latitude ?? null, centerLongitude: row.center_longitude ?? null, closest: closestFromRow(row), enteredAfter: iso(row.last_outside_before_entry_at ?? null), exitedBefore: iso(row.first_outside_after_exit_at ?? null), radiusMi: row.radius_nm ? nmToMiles(row.radius_nm) : null });
         visits.set(row.icao24, list);
       }
       const typeCodes = new Map(types.rows.flatMap((row) => (row.type_code ? [[row.icao24, row.type_code] as const] : [])));
