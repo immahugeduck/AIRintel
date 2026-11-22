@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ProfileNotFoundError, fetchAircraftProfile } from "../api/profile";
 import type { NetStatus } from "../domain/net";
 import { registryAvailabilityNotice } from "../domain/profile";
@@ -8,6 +8,7 @@ import type { NettedAircraft, NettedVisit } from "../domain/netted";
 import { PATTERN_TIER_LABEL, PATTERN_TIER_ORDER, type PatternAssessment } from "../domain/patterns";
 import { formatAltitudeFt, formatLastSeen, formatSpeedMph } from "../domain/units";
 import { compassPoint } from "../domain/geometry";
+import { aircraftHabits, commonLanes, describePath, describeWhen, habitsForAll, isNewPattern, DWELL_LABEL, SIGNATURE_BANDS, type AircraftHabits, type Lane } from "../domain/pass-signature";
 import { COMPARE_MIN_ENTRIES, passFlags, straightPassMinutes, timeInside, typicalPass, type PassFlag, type TypicalPass } from "../domain/encounter-compare";
 import { AccessDeniedError, AuthenticationRequiredError, ProviderNotConfiguredError } from "../providers/contracts";
 import { formatRadius } from "./AircraftList";
@@ -82,7 +83,7 @@ export function PatternReasons({ pattern }: { pattern: PatternAssessment }) {
 }
 
 /** Per-visit timeline: every time the aircraft entered the radius, newest first (Observed). */
-export function VisitTimeline({ item, timeZone, newSince, defaultOpen, radiusMi }: { item: NettedAircraft; timeZone?: string | undefined; newSince?: string | null | undefined; defaultOpen: boolean; radiusMi?: number | undefined }) {
+export function VisitTimeline({ item, timeZone, newSince, defaultOpen, radiusMi, habits: givenHabits }: { item: NettedAircraft; timeZone?: string | undefined; newSince?: string | null | undefined; defaultOpen: boolean; radiusMi?: number | undefined; habits?: AircraftHabits | undefined }) {
   const [open, setOpen] = useState(defaultOpen);
   const [all, setAll] = useState(false);
   const visits: NettedVisit[] = item.visits;
@@ -90,6 +91,7 @@ export function VisitTimeline({ item, timeZone, newSince, defaultOpen, radiusMi 
   const shown = all ? visits : visits.slice(0, VISIBLE_VISITS);
   const listId = `visits-${item.icao24}`;
   const typical = typicalPass(visits);
+  const habits = givenHabits ?? aircraftHabits(visits, radiusMi, timeZone);
   return (
     <div className="visit-log">
       <button type="button" className="disclosure" aria-expanded={open} aria-controls={listId} onClick={() => setOpen(!open)}>
@@ -109,7 +111,7 @@ export function VisitTimeline({ item, timeZone, newSince, defaultOpen, radiusMi 
                     <span className="visit-detail">
                       Entry {item.visitCount - index} · {describeStay(visit)} · closest {visit.closestMi.toFixed(1)} mi
                     </span>
-                    <ClosestPointLine visit={visit} timeZone={timeZone} flags={passFlags(visit, typical, radiusMi)} radiusMi={radiusMi} />
+                    <ClosestPointLine visit={visit} timeZone={timeZone} flags={[...passFlags(visit, typical, radiusMi), ...(isNewPattern(habits.perVisit[index] ?? null, habits) ? ["new-pattern" as const] : [])]} radiusMi={radiusMi} />
                   </div>
                 </li>
               );
@@ -125,13 +127,13 @@ export function VisitTimeline({ item, timeZone, newSince, defaultOpen, radiusMi 
   );
 }
 
-const FLAG_LABEL: Record<PassFlag, string> = { closer: "Closer than usual", lower: "Lower than usual", longer: "Longer than usual", lingered: "Lingered (3× a straight pass)" };
+const FLAG_LABEL: Record<PassFlag | "new-pattern", string> = { closer: "Closer than usual", lower: "Lower than usual", longer: "Longer than usual", lingered: "Lingered (3× a straight pass)", "new-pattern": "New pattern for this aircraft" };
 
 const clockTime = (iso: string, timeZone?: string) =>
   new Intl.DateTimeFormat("en-US", { ...(timeZone ? { timeZone } : {}), hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date(iso)).toLowerCase().replace(" ", "");
 
 /** Flight state at the closest recorded point of one entry (Observed) plus comparison flags (Calculated). */
-export function ClosestPointLine({ visit, timeZone, flags = [], radiusMi }: { visit: NettedVisit; timeZone?: string | undefined; flags?: PassFlag[]; radiusMi?: number | undefined }) {
+export function ClosestPointLine({ visit, timeZone, flags = [], radiusMi }: { visit: NettedVisit; timeZone?: string | undefined; flags?: (PassFlag | "new-pattern")[]; radiusMi?: number | undefined }) {
   const point = visit.closest;
   if (!point) return <span className="visit-closest fine-print">Closest-point details not recorded for this entry.</span>;
   const parts = [
@@ -148,6 +150,52 @@ export function ClosestPointLine({ visit, timeZone, flags = [], radiusMi }: { vi
       <span className="visit-closest-label">At closest:</span> {parts.join(" · ")}
       {flags.map((flag) => <span key={flag} className="pass-flag">{FLAG_LABEL[flag]}</span>)}
     </span>
+  );
+}
+
+/**
+ * This aircraft's usual way of passing you (its most common path signature), when it repeats, and whether other
+ * aircraft use the same path (a common lane). Calculated from the entries' closest-point snapshots.
+ */
+export function HabitLine({ habits, laneAircraft }: { habits: AircraftHabits | undefined; laneAircraft: ReadonlyMap<string, number> }) {
+  if (!habits || habits.signed < 2) return null;
+  const top = habits.habits[0]!;
+  if (top.count < 2) {
+    return <p className="habit-line fine-print"><strong>No usual pass yet:</strong> {habits.habits.length} different paths in {habits.signed} passes with details.</p>;
+  }
+  const when = describeWhen(top);
+  const dwell = (Object.entries(top.dwell) as [keyof typeof DWELL_LABEL, number][]).sort((a, b) => b[1] - a[1])[0]!;
+  const lane = laneAircraft.get(top.key);
+  return (
+    <p className="habit-line fine-print">
+      <strong>Usual pass</strong> ({top.count} of {habits.signed}): {describePath(top.signature)}
+      {when && ` · ${when}`}
+      {dwell[1] > 0 && ` · usually ${DWELL_LABEL[dwell[0]]}`}
+      {lane ? <span className="lane-tag">Common lane · {lane} aircraft</span> : <span className="lane-tag is-own">Its own path</span>}
+    </p>
+  );
+}
+
+/** Paths that several different aircraft fly over this location. */
+export function LanesSummary({ lanes, signedAircraft }: { lanes: Lane[]; signedAircraft: number }) {
+  const [open, setOpen] = useState(false);
+  if (signedAircraft === 0) return null;
+  return (
+    <div className="lanes-summary">
+      <button type="button" className="disclosure" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? "Hide common lanes" : `Common lanes over you · ${lanes.length}`}
+      </button>
+      {open && (lanes.length === 0
+        ? <p className="fine-print">No path is shared by {SIGNATURE_BANDS.laneMinAircraft} or more different aircraft yet.</p>
+        : (
+          <ol className="lane-list">
+            {lanes.slice(0, 8).map((lane) => (
+              <li key={lane.key}><span className="mono">{lane.aircraft} aircraft</span> · {lane.passes} passes · {describePath(lane.signature)}</li>
+            ))}
+          </ol>
+        ))}
+      {open && <p className="fine-print">A lane is a path (altitude band, speed band, heading and the side of your circle) flown by {SIGNATURE_BANDS.laneMinAircraft}+ different aircraft. Aircraft on a common lane are usually routine traffic; one that keeps its own path over you stands out.</p>}
+    </div>
   );
 }
 
@@ -205,6 +253,10 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
     : [...allAircraft.filter((item) => (filter === "flagged" ? isFlagged(item) : item.pattern?.tier !== "routine"))]
       .sort((a, b) => (PATTERN_TIER_ORDER[a.pattern?.tier ?? "low"] - PATTERN_TIER_ORDER[b.pattern?.tier ?? "low"]) || ((b.pattern?.score ?? 0) - (a.pattern?.score ?? 0)));
   const totalVisits = aircraft.reduce((sum, item) => sum + item.visitCount, 0);
+  const habitsByAircraft = useMemo(() => habitsForAll(allAircraft, radiusMi, timeZone), [allAircraft, radiusMi, timeZone]);
+  const lanes = useMemo(() => commonLanes(habitsByAircraft), [habitsByAircraft]);
+  const laneAircraft = useMemo(() => new Map(lanes.map((lane) => [lane.key, lane.aircraft])), [lanes]);
+  const signedAircraft = useMemo(() => [...habitsByAircraft.values()].filter((habits) => habits.signed > 0).length, [habitsByAircraft]);
 
   const net = state.kind === "ready" ? state.net ?? null : null;
   const lifetime = state.kind === "ready" && state.lifetime === true;
@@ -256,6 +308,8 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
         </div>
       )}
 
+      {state.kind !== "loading" && <LanesSummary lanes={lanes} signedAircraft={signedAircraft} />}
+
       {state.kind === "loading" ? (
         <div className="empty-state" role="status"><span className="spinner" aria-hidden="true" /><p>Loading your Netted log…</p></div>
       ) : aircraft.length === 0 && allAircraft.length > 0 ? (
@@ -289,7 +343,8 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
                   <div><dt>Closest</dt><dd className="mono">{item.closestApproachMi.toFixed(1)} mi</dd></div>
                 </dl>
                 {item.pattern && <PatternReasons pattern={item.pattern} />}
-                <VisitTimeline item={item} timeZone={timeZone} newSince={newSince} defaultOpen={drawer} radiusMi={radiusMi} />
+                <HabitLine habits={habitsByAircraft.get(item.icao24)} laneAircraft={laneAircraft} />
+                <VisitTimeline item={item} timeZone={timeZone} newSince={newSince} defaultOpen={drawer} radiusMi={radiusMi} habits={habitsByAircraft.get(item.icao24)} />
                 <button type="button" className="disclosure" aria-expanded={open} aria-controls={`desc-${item.icao24}`} onClick={() => setExpanded(open ? null : item.icao24)}>
                   {open ? "Hide description" : "Aircraft description"}
                 </button>

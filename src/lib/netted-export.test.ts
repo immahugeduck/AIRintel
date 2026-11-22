@@ -11,3 +11,21 @@ describe("netted export", () => {
     expect(j.count).toBe(1); expect(j.aircraft[0].icao24).toBe("a1b2c3");
   });
 });
+
+describe("entries export", () => {
+  it("adds the pass signature columns per entry", async () => {
+    const { nettedEntriesToCsv, NETTED_ENTRY_CSV_COLUMNS } = await import("./netted-export");
+    const at = "2026-11-17T15:00:00.000Z";
+    const visit = { enteredAt: at, lastSeenInRadiusAt: "2026-11-17T15:02:00.000Z", closestMi: 5, observationCount: 3, radiusMi: 7,
+      closest: { at, latitude: 40, longitude: -86, altitudeFt: 1600, altitudeSource: "barometric", groundSpeedKt: 80, trackDeg: 180, verticalRateFpm: 0, onGround: false, bearingFromCenterDeg: 90, basis: "at_write" } };
+    const csv = nettedEntriesToCsv([{ ...a, callsign: "TEST1", registration: "N1", visits: [visit] }] as never, 7);
+    const [header, row] = csv.split("\r\n");
+    expect(header).toBe(NETTED_ENTRY_CSV_COLUMNS.join(","));
+    const cells = row!.split(",");
+    const col = (name: string) => cells[NETTED_ENTRY_CSV_COLUMNS.indexOf(name as never)];
+    expect(col("sig_altitude_band")).toBe("1k-3k");
+    expect(col("sig_heading")).toBe("S");
+    expect(col("sig_side")).toBe("E");
+    expect(col("sig_path_key")).toBe("1k-3k|light|S|E");
+  });
+});

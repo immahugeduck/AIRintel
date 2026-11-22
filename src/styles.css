@@ -561,6 +561,11 @@ input[type="range"] { width: 100%; min-height: var(--tap); accent-color: var(--a
 .visit-closest-label { color: var(--text); font-weight: 600; }
 .pass-flag { display: inline-block; margin: .15rem 0 0 .4rem; padding: 0 .45rem; border-radius: 999px; background: var(--amber-soft); color: var(--amber); font-size: .7rem; font-weight: 600; line-height: 1.5; }
 .typical-pass { margin: .1rem 0 .3rem; }
+.habit-line { margin: .25rem 0 0; }
+.lane-tag { display: inline-block; margin-left: .4rem; padding: 0 .45rem; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border-strong); font-size: .7rem; font-weight: 600; line-height: 1.5; }
+.lane-tag.is-own { color: var(--amber); border-color: rgba(242, 181, 68, .35); }
+.lanes-summary { display: grid; gap: .3rem; }
+.lane-list { margin: 0; padding-left: 1.2rem; display: grid; gap: .2rem; font-size: .82rem; color: var(--text-muted); }
 .new-tag { display: inline-block; padding: .05rem .45rem; border-radius: 999px; background: var(--sky-soft); color: var(--sky); border: 1px solid rgba(140, 196, 242, .35); font-family: var(--font-ui); font-size: .66rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .netted-drawer-panel .netted-card { background: var(--surface-2); }
 .netted-drawer-panel .netted-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
