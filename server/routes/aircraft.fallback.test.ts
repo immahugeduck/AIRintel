@@ -30,7 +30,16 @@ describe("GET /aircraft-nearby provider fallback", () => {
       expect(json).toMatchObject({ sources: ["adsb_fi"], providerFailures: [{ provider: "adsb_lol", code: "provider_network_error", detail: "UND_ERR_CONNECT_TIMEOUT" }], observations: [{ provider: "adsb_fi", icao24: "bbb222" }] });
       // adsb.lol is not retried when fallbacks exist: one attempt, then adsb.fi.
       expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(String(fetchMock.mock.calls[0]![0])).toContain("/dist/75");
     } finally { restore(); }
+  });
+
+  it("retains the provider query context but hides outside aircraft from the radius list", async () => {
+    const fetchMock = vi.fn(async () => new Response(body("aaa111")));
+    vi.stubGlobal("fetch", fetchMock);
+    // Reuse the existing fixture: ~4.8 NM from this center, outside 2 NM but inside the 6 NM context.
+    const json = await (await get("/aircraft-nearby?lat=39.77&lon=-86.16&radiusNm=2")).json() as Record<string, unknown>;
+    expect(json.observations).toEqual([]);
   });
 
   it("omits providerFailures when adsb.lol answers", async () => {

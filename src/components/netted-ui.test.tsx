@@ -1,3 +1,5 @@
+import { encounterReplayWindow } from "../domain/replay";
+import { encounterIntelligence, localTypeFrequency } from "../domain/encounter-intelligence";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { deriveNetStatus, type NetStatus } from "../domain/net";
@@ -91,5 +93,22 @@ describe("NetControl", () => {
   it("surfaces save errors", () => {
     const html = renderToStaticMarkup(<NetControl {...props} saveError="The net could not be updated (server answered 500)." state={{ kind: "ready", data: data(true) }} />);
     expect(html).toContain("server answered 500");
+  });
+});
+
+// Reuse the existing labeled UI fixture; no additional aircraft records.
+describe("encounter intelligence and replay context", () => {
+  it("does not label a small sample globally rare or estimate surveillance likelihood", () => {
+    expect(localTypeFrequency(item, [item, item])).toMatchObject({ matching: 1, knownAircraft: 1, uncommon: false });
+    expect(encounterIntelligence(item, [item])).toMatchObject({ military: null, surveillanceLikelihood: "Unknown", coverage: "sparse" });
+    const html = render(ready(null));
+    expect(html).toContain("Surveillance likelihood");
+    expect(html).toContain("not worldwide rarity");
+  });
+  it("requests approach and departure around the saved timestamps, capped at now", () => {
+    const v = item.visits[0]!;
+    const window = encounterReplayWindow(v, NOW);
+    expect(Date.parse(window.start)).toBe(Date.parse(v.enteredAt) - 600_000);
+    expect(Date.parse(window.end)).toBe(NOW);
   });
 });

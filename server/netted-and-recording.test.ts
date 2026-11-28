@@ -145,6 +145,10 @@ describe("live view -> flight recorder contribution", () => {
       const signedIn = await app.request("/aircraft-nearby?lat=40&lon=-86&radiusNm=6", { headers: { origin, ...authed } });
       expect((await signedIn.json() as Record<string, unknown>).recording).toBe("recorded");
       expect(db.sql.some((text) => text.includes("record_aircraft_observation"))).toBe(true);
+      // Reuse the same upstream aircraft, now outside the inner radius but inside the widened context query.
+      const outside = await app.request("/aircraft-nearby?lat=40.15&lon=-86&radiusNm=6", { headers: { origin, ...authed } });
+      expect(await outside.json()).toMatchObject({ observations: [], recording: "recorded" });
+      expect(db.sql.filter((text) => text.includes("record_aircraft_observation"))).toHaveLength(2);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -204,5 +208,20 @@ describe("live view -> per-account encounter log", () => {
     expect(index).toBeGreaterThan(-1);
     expect(db.params[index]![0]).toBe(userId);
     expect(db.params[index]![11]).toBe("live");
+  });
+});
+
+
+describe("bounded historical replay", () => {
+  it("binds an old explicit UTC window without replacing it with the latest 24 hours", async () => {
+    const observation = liveResult().observations[0]!;
+    const start = "2026-10-01T12:00:00.000Z";
+    const end = "2026-10-01T12:20:00.000Z";
+    const db = fakeDb(["history"], (sql) => sql.includes("where a.icao24 = $1") ? [{ id: userId, icao24: observation.icao24, registration: observation.registration, first_seen_at: new Date(start), last_seen_at: new Date(end) }] : undefined);
+    const response = await get(build(db), `/history?action=track&icao24=${observation.icao24}&start=${start}&end=${end}`, authed);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ windowStart: start, windowEnd: end, points: [], coverage: { truncated: false } });
+    const queryIndex = db.sql.findIndex((sql) => sql.includes("order by p.observed_at desc limit 10001"));
+    expect(db.params[queryIndex]?.slice(1)).toEqual([new Date(start), new Date(end)]);
   });
 });

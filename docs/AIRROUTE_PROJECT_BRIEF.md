@@ -4,7 +4,7 @@ AIRIntel is a responsive aviation-data and geospatial-analysis platform that con
 
 ## Product outcomes
 
-- View real live aircraft on a Leaflet/MapQuest map.
+- View real live aircraft on a Leaflet/Mapbox map.
 - Search by registration, ICAO24, callsign, operator, or organization.
 - Preserve raw observations and normalize them into a provider-neutral contract.
 - Reconstruct and replay flights without rewriting raw evidence.
@@ -15,7 +15,7 @@ AIRIntel is a responsive aviation-data and geospatial-analysis platform that con
 
 ## Phase One: Foundation
 
-The milestone is “I can watch airplanes live.” It includes repository foundation, React/Vite, Leaflet with MapQuest, a server-only provider gateway, ADS-B and OpenSky adapters after their contracts are documented, real aircraft markers, freshness, radius queries, and search by registration/ICAO24/callsign.
+The milestone is “I can watch airplanes live.” It includes repository foundation, React/Vite, Leaflet with Mapbox, a server-only provider gateway, ADS-B and OpenSky adapters after their contracts are documented, real aircraft markers, freshness, radius queries, and search by registration/ICAO24/callsign.
 
 Because simulated or mock data is prohibited, missing provider configuration produces an explicit configuration-required state. It does not produce demo aircraft.
 

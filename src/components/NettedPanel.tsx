@@ -1,3 +1,4 @@
+import { encounterIntelligence } from "../domain/encounter-intelligence";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { ProfileNotFoundError, fetchAircraftProfile } from "../api/profile";
@@ -24,6 +25,7 @@ type Props = {
   radiusMi: number;
   selectedIcao24: string | null;
   onSelect: (icao24: string) => void;
+  onReplay?: (icao24: string, enteredAt: string) => void;
   onSignIn?: () => void;
   timeZone?: string;
   /** Disable the lazy profile lookup (test harness). */
@@ -83,7 +85,7 @@ export function PatternReasons({ pattern }: { pattern: PatternAssessment }) {
 }
 
 /** Per-visit timeline: every time the aircraft entered the radius, newest first (Observed). */
-export function VisitTimeline({ item, timeZone, newSince, defaultOpen, radiusMi, habits: givenHabits }: { item: NettedAircraft; timeZone?: string | undefined; newSince?: string | null | undefined; defaultOpen: boolean; radiusMi?: number | undefined; habits?: AircraftHabits | undefined }) {
+export function VisitTimeline({ item, timeZone, newSince, defaultOpen, radiusMi, habits: givenHabits, onReplay }: { onReplay?: ((icao24: string, enteredAt: string) => void) | undefined; item: NettedAircraft; timeZone?: string | undefined; newSince?: string | null | undefined; defaultOpen: boolean; radiusMi?: number | undefined; habits?: AircraftHabits | undefined }) {
   const [open, setOpen] = useState(defaultOpen);
   const [all, setAll] = useState(false);
   const visits: NettedVisit[] = item.visits;
@@ -111,6 +113,7 @@ export function VisitTimeline({ item, timeZone, newSince, defaultOpen, radiusMi,
                     <span className="visit-detail">
                       Entry {item.visitCount - index} · {describeStay(visit)} · closest {visit.closestMi.toFixed(1)} mi
                     </span>
+                    {onReplay && <button type="button" className="button button-ghost" onClick={() => onReplay(item.icao24, visit.enteredAt)}>Replay this encounter</button>}
                     <ClosestPointLine visit={visit} timeZone={timeZone} flags={[...passFlags(visit, typical, radiusMi), ...(isNewPattern(habits.perVisit[index] ?? null, habits) ? ["new-pattern" as const] : [])]} radiusMi={radiusMi} />
                   </div>
                 </li>
@@ -243,7 +246,7 @@ const reasonCopy: Record<Extract<NettedState, { kind: "session" }>["reason"], st
 };
 
 /** Aircraft netted inside the watch radius with a visit counter and a short sourced description. */
-export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignIn, timeZone, profileLookup = true, variant = "tab", newSince = null, onOpenNetSettings }: Props) {
+export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onReplay, onSignIn, timeZone, profileLookup = true, variant = "tab", newSince = null, onOpenNetSettings }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [filter, setFilter] = useState<PatternFilter>("all");
   const allAircraft = state.kind === "loading" ? [] : state.aircraft;
@@ -343,8 +346,9 @@ export function NettedPanel({ state, radiusMi, selectedIcao24, onSelect, onSignI
                   <div><dt>Closest</dt><dd className="mono">{item.closestApproachMi.toFixed(1)} mi</dd></div>
                 </dl>
                 {item.pattern && <PatternReasons pattern={item.pattern} />}
+                <EncounterIntel item={item} aircraft={allAircraft} />
                 <HabitLine habits={habitsByAircraft.get(item.icao24)} laneAircraft={laneAircraft} />
-                <VisitTimeline item={item} timeZone={timeZone} newSince={newSince} defaultOpen={drawer} radiusMi={radiusMi} habits={habitsByAircraft.get(item.icao24)} />
+                <VisitTimeline onReplay={onReplay} item={item} timeZone={timeZone} newSince={newSince} defaultOpen={drawer} radiusMi={radiusMi} habits={habitsByAircraft.get(item.icao24)} />
                 <button type="button" className="disclosure" aria-expanded={open} aria-controls={`desc-${item.icao24}`} onClick={() => setExpanded(open ? null : item.icao24)}>
                   {open ? "Hide description" : "Aircraft description"}
                 </button>
@@ -391,4 +395,20 @@ function AircraftDescription({ item, enabled }: { item: NettedAircraft; enabled:
       <p className="fine-print">Registration does not establish who operated or occupied a particular flight.</p>
     </>
   );
+}
+
+/** Scope and uncertainty travel with the findings, including sparse/partial logs. */
+function EncounterIntel({ item, aircraft }: { item: NettedAircraft; aircraft: readonly NettedAircraft[] }) {
+  const intel = encounterIntelligence(item, aircraft);
+  return <details className="encounter-intel">
+    <summary>Encounter intelligence{intel.frequency?.uncommon ? " · uncommon type in this log" : ""}{intel.military ? " · military database flag" : ""}</summary>
+    <dl className="netted-facts">
+      <div><dt>Type frequency · Calculated</dt><dd>{intel.frequency ? `${intel.frequency.type}: ${intel.frequency.matching} of ${intel.frequency.knownAircraft} typed aircraft in this loaded log` : "Unknown — no provider type"}</dd></div>
+      <div><dt>Military classification</dt><dd>{intel.military ? `${intel.military.evidence}: ${intel.military.label}` : "Unknown — no retained military flag in this assessment"}</dd></div>
+      <div><dt>Surveillance likelihood</dt><dd>{intel.surveillanceLikelihood}</dd></div>
+    </dl>
+    <p className="fine-print">Local frequency excludes untyped aircraft and reflects only the loaded log, not worldwide rarity. Uncommon means at most 5% among at least 20 typed aircraft. Military classification does not identify the mission.</p>
+    {intel.behavior.length > 0 ? <ul>{intel.behavior.map((reason) => <li key={reason.code}>{reason.evidence}: {reason.label}</li>)}</ul> : <p className="fine-print">No qualifying behavior signals in the available assessment.</p>}
+    <p className="fine-print">Coverage: {intel.coverage}. These signals can prioritize review of possible surveillance-compatible activity, but also occur in training, surveying, news, utility work and ordinary traffic. Route geometry cannot establish surveillance purpose, equipment use, or a numerical likelihood.</p>
+  </details>;
 }

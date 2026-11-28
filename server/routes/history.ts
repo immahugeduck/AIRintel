@@ -1,3 +1,4 @@
+import { replayWindowSchema } from "../../src/domain/replay.js";
 import { errorFields, log } from "../logger.js";
 import { Hono, type Context } from "hono";
 import { z } from "zod";
@@ -422,8 +423,14 @@ export function historyRoutes(db: Queryable) {
     }
 
     async function track(rawIcao: string | undefined, hours: number) {
+      const start = c.req.query("start");
+      const end = c.req.query("end");
+      const explicit = start !== undefined || end !== undefined ? replayWindowSchema.safeParse({ start, end }) : null;
+      if (explicit && (!explicit.success || Date.parse(explicit.data.end) > Date.now())) return c.json({ error: "invalid_track_query" }, 400);
       const window = await loadWindow(rawIcao, hours);
       if ("error" in window) return window.error;
+      const windowStart = explicit?.success ? new Date(explicit.data.start) : window.windowStart;
+      const windowEnd = explicit?.success ? new Date(explicit.data.end) : window.windowEnd;
       const { rows } = await db.query<{
         provider: string; observation_registration: string | null; callsign: string | null; latitude: number; longitude: number;
         altitude_ft: number | null; altitude_source: string | null; ground_speed_kt: number | null; track_deg: number | null;
@@ -434,7 +441,7 @@ export function historyRoutes(db: Queryable) {
            from public.aircraft_positions p join public.data_sources s on s.id = p.source_id
           where p.aircraft_id = $1 and p.observed_at >= $2 and p.observed_at <= $3
           order by p.observed_at desc limit 10001`,
-        [window.aircraft.id, window.windowStart, window.windowEnd],
+        [window.aircraft.id, windowStart, windowEnd],
       );
       const truncated = rows.length > 10_000;
       const points = rows.slice(0, 10_000).reverse().map((row) => ({
@@ -456,8 +463,8 @@ export function historyRoutes(db: Queryable) {
       return c.json({
         aircraft: aircraftDto(window.aircraft),
         points,
-        windowStart: window.windowStart.toISOString(),
-        windowEnd: window.windowEnd.toISOString(),
+        windowStart: windowStart.toISOString(),
+        windowEnd: windowEnd.toISOString(),
         receivedAt: new Date().toISOString(),
         coverage: { returnedPoints: points.length, truncated, sources: [...new Set(points.map((point) => point.provider))] },
       });

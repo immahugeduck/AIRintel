@@ -94,6 +94,9 @@ describe("history input validation", () => {
     ["/history?action=search&q=a", "invalid_search"],
     ["/history?action=search&q=N1%25", "invalid_search"],
     ["/history?action=track&icao24=zzzzzz", "invalid_track_query"],
+    ["/history?action=track&icao24=abcdef&start=bad", "invalid_track_query"],
+    ["/history?action=track&icao24=abcdef&start=2026-11-01T00:00:00Z&end=2026-11-03T00:00:00Z", "invalid_track_query"],
+    ["/history?action=track&icao24=abcdef&start=2026-11-01T00:00:00Z&end=2026-10-31T00:00:00Z", "invalid_track_query"],
     ["/history?action=nearby&lat=abc&lon=1", "invalid_spatial_query"],
     ["/history?action=other", "invalid_action"],
   ])("%s -> 400 %s", async (path, error) => {

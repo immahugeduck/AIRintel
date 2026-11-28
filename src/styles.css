@@ -606,3 +606,15 @@ input[type="range"] { width: 100%; min-height: var(--tap); accent-color: var(--a
 .control-compare td.mono { text-align: right; width: 4rem; }
 .control-compare td:last-child { width: 1%; white-space: nowrap; }
 .control-compare th .fine-print { display: block; font-weight: 400; overflow-wrap: anywhere; }
+
+/* Recorded-history controls remain usable on narrow screens. */
+.replay-controls { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.replay-controls button, .replay-controls select, #encounter-replay { min-height: 44px; }
+#encounter-replay { width: 100%; max-width: 100%; font-size: 1rem; }
+.encounter-intel { margin-block: .75rem; }
+.encounter-intel summary { cursor: pointer; min-height: 44px; padding-block: .75rem; }
+.encounter-intel dd { overflow-wrap: anywhere; }
+
+@media (max-width: 1023px) {
+  .app-shell[data-view="history"] .map-region { display: block; height: clamp(320px, 48dvh, 480px); }
+}

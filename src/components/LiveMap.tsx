@@ -223,7 +223,7 @@ export function LiveMap({ id, settingsOpen, onSettingsOpenChange, center, radius
           <MapCenter center={center} radiusNm={radiusNm} />
           {RANGE_RINGS_MI.filter((ring) => ring < radiusMi).map((ring) => <Circle key={`ring:${ring}`} center={center} radius={milesToMeters(ring)} pathOptions={{ color: MAP_COLORS.ring, weight: 1, opacity: 0.35, dashArray: "2 6", fill: false }} interactive={false} />)}
           <Circle center={center} radius={milesToMeters(radiusMi)} pathOptions={{ color: MAP_COLORS.radius, weight: 1.75, opacity: 0.9, fillColor: MAP_COLORS.radius, fillOpacity: 0.04 }} interactive={false} />
-          <CircleMarker center={center} radius={7} pathOptions={{ color: "#0b1117", weight: 2, fillColor: MAP_COLORS.me, fillOpacity: 1 }}><Tooltip direction="bottom">My location · {radiusMi} mi radius</Tooltip></CircleMarker>
+          <CircleMarker center={center} radius={7} pathOptions={{ color: "#0b1117", weight: 2, fillColor: MAP_COLORS.me, fillOpacity: 1 }}><Tooltip direction="bottom">Watch center · {radiusMi} mi radius</Tooltip></CircleMarker>
           <ZoomControl position="bottomright" />
           {tileUrl ? (
             <TileLayer
@@ -258,7 +258,7 @@ export function LiveMap({ id, settingsOpen, onSettingsOpenChange, center, radius
           )))}
           {replayPoint && <Marker position={[replayPoint.latitude, replayPoint.longitude]} icon={aircraftIcon(replayPoint.trackDeg, true)}><Tooltip permanent direction="top">{replayPoint.registration ?? replayPoint.callsign ?? replayPoint.icao24}</Tooltip></Marker>}
         </MapContainer>
-        <p className="map-legend" aria-label="Map legend"><span><i className="dot dot-aircraft" />Aircraft</span><span><i className="dot dot-selected" />Selected</span><span><i className="dot dot-me" />Me</span></p>
+        <p className="map-legend" aria-label="Map legend"><span><i className="dot dot-aircraft" />Aircraft</span><span><i className="dot dot-selected" />Selected</span><span><i className="dot dot-me" />Watch center</span></p>
         {!configured && (
           <div className="map-blocker" role="status">
             <span className="radar-mark" aria-hidden="true" />
