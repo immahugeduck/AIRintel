@@ -1,3 +1,4 @@
+import { replayWindowSchema, type ReplayWindow } from "../domain/replay";
 import { aircraftSearchResponseSchema, nearbyAircraftResponseSchema, routeSummaryResponseSchema, trackResponseSchema, trackInsightsResponseSchema, type NearbyAircraftQuery, type RouteSummaryQuery, type TrackInsightsQuery } from "../domain/aircraft";
 import { historyApiEndpoint, resolveApiUrl } from "../lib/api-url";
 import { getAccessToken, getAuthClient } from "../lib/auth";
@@ -36,13 +37,18 @@ export function validateHistorySearch(search: string) {
   return normalized;
 }
 
-export async function fetchRecentTrack(icao24: string, signal?: AbortSignal) {
+export async function fetchRecentTrack(icao24: string, signal?: AbortSignal, window?: ReplayWindow) {
   const normalized = icao24.trim().toLowerCase();
   if (!/^[0-9a-f]{6}$/.test(normalized)) throw new Error("ICAO24 must be six hexadecimal characters");
   const url = resolveApiUrl(endpoint());
   url.searchParams.set("action", "track");
   url.searchParams.set("icao24", normalized);
   url.searchParams.set("hours", "24");
+  if (window) {
+    const safe = replayWindowSchema.parse(window);
+    url.searchParams.set("start", safe.start);
+    url.searchParams.set("end", safe.end);
+  }
   return trackResponseSchema.parse(await getJson(url, signal));
 }
 

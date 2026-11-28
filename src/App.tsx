@@ -1,3 +1,4 @@
+import { encounterReplayWindow, replayIndexAt } from "./domain/replay";
 import { useQuery } from "@tanstack/react-query";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { fetchAircraft } from "./api/aircraft";
@@ -16,8 +17,8 @@ import { NettedDrawer } from "./components/NettedDrawer";
 import { NettedPanel, type NettedState } from "./components/NettedPanel";
 import { ReplayPanel } from "./components/ReplayPanel";
 import { SelectedDock } from "./components/SelectedDock";
-import type { AircraftObservation } from "./domain/aircraft";
-import { NETTED_DEFAULT_HOURS, countRadiusVisits, toNettedDto } from "./domain/netted";
+import type { AircraftObservation, TrackPoint } from "./domain/aircraft";
+import { NETTED_DEFAULT_HOURS, countRadiusVisits, toNettedDto, type NettedVisit } from "./domain/netted";
 import { buildRadiusRows } from "./domain/radius-list";
 import { VISIT_GAP_MINUTES, knotsToMph, milesToNm, nmToMiles } from "./domain/units";
 import { useFollowMe } from "./lib/use-follow-me";
@@ -58,6 +59,8 @@ export default function App() {
   const [submittedSearch, setSubmittedSearch] = useState("");
   const [selectedIcao24, setSelectedIcao24] = useState<string | null>(null);
   const [replayIndex, setReplayIndex] = useState(0);
+  const [selectedEntry, setSelectedEntry] = useState("");
+  const [replaySnapshot, setReplaySnapshot] = useState<{ icao24: string; visit: NettedVisit } | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerSince, setDrawerSince] = useState<string | null>(null);
   const drawerTriggerRef = useRef<HTMLButtonElement>(null);
@@ -71,6 +74,13 @@ export default function App() {
   const centerMode = area.followMe ? "follow" as const : area.source === "default" ? undefined : "fixed" as const;
   const openDrawer = () => { setDrawerSince(readLastOpened()); setDrawerOpen(true); };
   const closeDrawer = useCallback(() => { setDrawerOpen(false); writeLastOpened(new Date().toISOString()); }, []);
+  const replayEncounter = (icao24: string, enteredAt: string) => {
+    const visit = netted.data?.aircraft.find((item) => item.icao24 === icao24)?.visits.find((item) => item.enteredAt === enteredAt);
+    setReplaySnapshot(visit ? { icao24, visit } : null);
+    setSelectedIcao24(icao24); setSelectedEntry(enteredAt); setReplayIndex(0);
+    if (drawerOpen) closeDrawer();
+    setView("history"); window.scrollTo({ top: 0 });
+  };
   const go = (next: View) => { setView(next); window.scrollTo({ top: 0 }); };
 
   const query = useMemo(() => ({ latitude, longitude, radiusNm }), [latitude, longitude, radiusNm]);
@@ -106,7 +116,29 @@ export default function App() {
 
   const search = useQuery({ queryKey: ["aircraft-search", submittedSearch], queryFn: ({ signal }) => searchAircraft(submittedSearch, signal), enabled: submittedSearch.length >= 2, retry: false });
   const historyEnabled = selectedIcao24 !== null && view === "history";
-  const track = useQuery({ queryKey: ["recent-track", selectedIcao24], queryFn: ({ signal }) => fetchRecentTrack(selectedIcao24!, signal), enabled: selectedIcao24 !== null && signedIn, retry: false });
+  const selectedLogAircraft = netted.data?.aircraft.find((item) => item.icao24 === selectedIcao24);
+  const snapshotVisit = replaySnapshot?.icao24 === selectedIcao24 ? replaySnapshot.visit : undefined;
+  const replayVisits = selectedLogAircraft?.visits ?? (snapshotVisit ? [snapshotVisit] : []);
+  const selectedVisit = replayVisits.find((visit) => visit.enteredAt === selectedEntry) ?? (snapshotVisit?.enteredAt === selectedEntry ? snapshotVisit : undefined);
+  const track = useQuery({
+    queryKey: ["recent-track", selectedIcao24, selectedVisit?.enteredAt ?? null, signedIn],
+    queryFn: ({ signal }) => fetchRecentTrack(selectedIcao24!, signal, selectedVisit ? encounterReplayWindow(selectedVisit) : undefined),
+    enabled: selectedIcao24 !== null && signedIn,
+    refetchInterval: pollMs,
+    refetchIntervalInBackground: false,
+    retry: false,
+  });
+  const priorTrack = useRef<{ key: string; points: TrackPoint[] } | null>(null);
+  useEffect(() => {
+    if (!track.data) return;
+    const key = `${selectedIcao24}:${selectedEntry}`;
+    const previous = priorTrack.current;
+    if (previous?.key === key) {
+      const at = previous.points[replayIndex]?.observedAt;
+      if (at) setReplayIndex(replayIndexAt(track.data.points.map((point) => Date.parse(point.observedAt)), Date.parse(at)));
+    }
+    priorTrack.current = { key, points: track.data.points };
+  }, [track.data]);
   const profile = useQuery({ queryKey: ["aircraft-profile", selectedIcao24], queryFn: ({ signal }) => fetchAircraftProfile(selectedIcao24!, signal), enabled: historyEnabled, retry: false });
   const insights = useQuery({ queryKey: ["track-insights", selectedIcao24], queryFn: ({ signal }) => fetchTrackInsights({ icao24: selectedIcao24!, hours: 24 }, signal), enabled: historyEnabled, retry: false });
   const routeSummary = useQuery({ queryKey: ["route-summary", selectedIcao24], queryFn: ({ signal }) => fetchRouteSummary({ icao24: selectedIcao24!, hours: 24 }, signal), enabled: historyEnabled, retry: false });
@@ -159,7 +191,7 @@ export default function App() {
 
   const selectedRow = radiusRows.find((row) => row.icao24 === selectedIcao24) ?? null;
   const selectedNetted = nettedState.kind === "loading" ? null : nettedState.aircraft.find((item) => item.icao24 === selectedIcao24) ?? null;
-  const selectAircraft = (icao24: string) => { setSelectedIcao24(icao24); setReplayIndex(0); };
+  const selectAircraft = (icao24: string) => { setSelectedIcao24(icao24); setSelectedEntry(""); setReplaySnapshot(null); setReplayIndex(0); };
 
   const feedState = aircraft.error instanceof ProviderNotConfiguredError ? { label: "Feed not configured", tone: "warn" } : aircraft.isError ? { label: "Feed unavailable", tone: "error" } : aircraft.isPending ? { label: "Connecting…", tone: "idle" } : { label: "Live", tone: "ok" };
   const liveError = aircraft.error instanceof ProviderNotConfiguredError ? "No live aircraft provider is configured for this deployment. No aircraft are invented." : aircraft.isError ? aircraft.error.message : null;
@@ -191,13 +223,13 @@ export default function App() {
         <div className="map-region">
           <div className="map-overlay-top">
             <button type="button" className="watch-chip" onClick={() => go("more")}>
-              <PinIcon /><span>{area.source === "device" ? "My location" : area.source === "saved" ? "Saved location" : "Default area"} · {radiusMi} mi</span>
+              <PinIcon /><span>{view === "history" && selectedVisit ? "Saved encounter center" : area.source === "device" ? "My location" : area.source === "saved" ? "Saved location" : "Default area"} · {radiusMi} mi</span>
             </button>
             {recordingNote && <span className="status-pill is-ok small">{recordingNote}</span>}
           </div>
           <ErrorBoundary label="The map">
             <Suspense fallback={<div className="map-loading" role="status"><span className="spinner" aria-hidden="true" /> Loading map…</div>}>
-              <LiveMap id="live-feed" settingsOpen={mapSettingsOpen} onSettingsOpenChange={setMapSettingsOpen} center={[latitude, longitude]} observations={aircraft.data?.observations ?? []} selectedIcao24={selectedIcao24} onSelectAircraft={selectAircraft} radiusMi={radiusMi} trackPoints={track.data?.points ?? []} replayIndex={replayIndex} />
+              <LiveMap id="live-feed" settingsOpen={mapSettingsOpen} onSettingsOpenChange={setMapSettingsOpen} center={view === "history" && selectedVisit?.centerLatitude != null && selectedVisit.centerLongitude != null ? [selectedVisit.centerLatitude, selectedVisit.centerLongitude] : [latitude, longitude]} observations={aircraft.data?.observations ?? []} selectedIcao24={selectedIcao24} onSelectAircraft={selectAircraft} radiusMi={view === "history" && selectedVisit ? selectedVisit.radiusMi ?? radiusMi : radiusMi} trackPoints={track.data?.points ?? []} replayIndex={replayIndex} />
             </Suspense>
           </ErrorBoundary>
         </div>
@@ -209,7 +241,7 @@ export default function App() {
               <AircraftList rows={radiusRows} selectedIcao24={selectedIcao24} onSelect={selectAircraft} radiusMi={radiusMi} loading={aircraft.isPending || (signedIn && nearby.isPending)} liveError={liveError} recordedNote={recordedNote} />
             </div>
           )}
-          {view === "netted" && <NettedPanel state={nettedState} radiusMi={radiusMi} selectedIcao24={selectedIcao24} onSelect={selectAircraft} onSignIn={() => setAuthPrompt((value) => value + 1)} onOpenNetSettings={() => go("more")} />}
+          {view === "netted" && <NettedPanel onReplay={replayEncounter} state={nettedState} radiusMi={radiusMi} selectedIcao24={selectedIcao24} onSelect={selectAircraft} onSignIn={() => setAuthPrompt((value) => value + 1)} onOpenNetSettings={() => go("more")} />}
           {view === "history" && (
             <div className="stack-lg">
               <section className="panel" aria-labelledby="search-heading">
@@ -233,13 +265,23 @@ export default function App() {
               </section>
               {!selectedIcao24 ? <p className="empty-inline">Select an aircraft from the map, the Aircraft list, Netted or a search result to see its replay and profile.</p> : (
                 <>
-                  {track.isFetching ? <p className="notice"><span className="spinner" aria-hidden="true" /> Loading recorded observations…</p>
-                    : track.error instanceof AuthenticationRequiredError ? <p className="notice notice-warn">Sign in to replay recorded tracks.</p>
-                      : track.error instanceof AccessDeniedError ? <p className="notice notice-warn">Replay needs the history access grant.</p>
-                        : track.error instanceof ProviderNotConfiguredError ? null
-                          : track.isError ? <p className="notice notice-error" role="alert">Track unavailable: {track.error.message}</p>
-                            : track.data?.points.length === 0 ? <p className="empty-inline">No observations were recorded for this aircraft in the last 24 hours.</p>
-                              : track.data ? <ReplayPanel points={track.data.points} aircraftLabel={track.data.aircraft.registration ?? track.data.aircraft.icao24} index={replayIndex} onIndexChange={setReplayIndex} /> : null}
+                  {!signedIn && <p className="notice notice-warn">Sign in to replay saved observations.</p>}
+                  <label htmlFor="encounter-replay">Recorded encounter</label>
+                  <select id="encounter-replay" value={selectedVisit?.enteredAt ?? ""} onChange={(event) => { const visit = replayVisits.find((entry) => entry.enteredAt === event.target.value); setReplaySnapshot(visit && selectedIcao24 ? { icao24: selectedIcao24, visit } : null); setSelectedEntry(event.target.value); setReplayIndex(0); }}>
+                    <option value="">All recorded observations · last 24 hours</option>
+                    {replayVisits.map((visit) => <option key={visit.enteredAt} value={visit.enteredAt}>{new Date(visit.enteredAt).toLocaleString()} · {visit.observationCount} inside sightings</option>)}
+                  </select>
+                  {selectedVisit && <p className="fine-print">Includes up to 10 minutes of recorded approach and departure on either side, within a 24-hour request. Coverage depends on collection and retention. {selectedVisit.centerLatitude == null ? "Historical center unknown." : "Map uses the saved entry center; follow-me may have moved during this encounter."}</p>}
+                  {track.isFetching && track.data && <p role="status" className="fine-print">Refreshing recorded observations…</p>}
+                  {track.isError && track.data && <p role="status" className="notice notice-warn">Refresh failed. Showing the last loaded track.</p>}
+                  {track.data?.coverage.truncated && <p className="notice notice-warn">Track limited to the newest 10,000 recorded points in this window.</p>}
+                  {track.isFetching && !track.data ? <p className="notice"><span className="spinner" aria-hidden="true" /> Loading recorded observations…</p>
+                    : !track.data && track.error instanceof AuthenticationRequiredError ? <p className="notice notice-warn">Sign in to replay recorded tracks.</p>
+                      : !track.data && track.error instanceof AccessDeniedError ? <p className="notice notice-warn">Replay needs the history access grant.</p>
+                        : !track.data && track.error instanceof ProviderNotConfiguredError ? <p className="notice notice-warn">Recorded history is not configured.</p>
+                          : !track.data && track.isError ? <p className="notice notice-error" role="alert">Track unavailable: {track.error.message}</p>
+                            : track.data?.points.length === 0 ? <p className="empty-inline">No retained observations are available in this replay window.</p>
+                              : track.data ? <ReplayPanel visit={selectedVisit} key={`${selectedIcao24}:${selectedEntry}`} title={selectedVisit ? "Encounter replay + approach/departure" : "24-hour replay"} points={track.data.points} aircraftLabel={track.data.aircraft.registration ?? track.data.aircraft.icao24} index={replayIndex} onIndexChange={setReplayIndex} /> : null}
                   {insights.data && (
                     <section className="replay" aria-labelledby="insights-heading">
                       <div className="replay-title"><div><p className="eyebrow">Track insights</p><h3 id="insights-heading">Last 24 hours</h3></div><span>{insights.data.summary.pointCount} points</span></div>
@@ -293,7 +335,7 @@ export default function App() {
       </main>
 
       <NettedDrawer open={drawerOpen} onClose={closeDrawer} title="Netted log" subtitle={`Entries into your ${radiusMi} mi radius`}>
-        <NettedPanel variant="drawer" state={nettedState} radiusMi={radiusMi} selectedIcao24={selectedIcao24} newSince={drawerSince} onSelect={(icao24) => { selectAircraft(icao24); }} onSignIn={() => { closeDrawer(); setAuthPrompt((value) => value + 1); }} onOpenNetSettings={openNetSettings} />
+        <NettedPanel onReplay={replayEncounter} variant="drawer" state={nettedState} radiusMi={radiusMi} selectedIcao24={selectedIcao24} newSince={drawerSince} onSelect={(icao24) => { selectAircraft(icao24); }} onSignIn={() => { closeDrawer(); setAuthPrompt((value) => value + 1); }} onOpenNetSettings={openNetSettings} />
       </NettedDrawer>
 
       {selectedIcao24 && view !== "history" && view !== "more" && (

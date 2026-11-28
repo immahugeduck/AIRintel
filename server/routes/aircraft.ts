@@ -1,3 +1,4 @@
+import { distanceNm } from "../../src/domain/geometry.js";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppVariables } from "../http.js";
@@ -29,12 +30,12 @@ export function aircraftRoutes(options: { adsb: AdsbProviderConfig | null; recor
     if (!parsed.success) return c.json({ error: "invalid_spatial_query" }, 400);
     if (!options.adsb) return c.json({ error: "provider_not_configured" }, 503);
     try {
-      const result = await fetchLiveAircraft(options.adsb, { lat: parsed.data.lat, lon: parsed.data.lon, radiusNm: parsed.data.radiusNm }, fetch, liveProviderOptions(options.adsb));
+      const result = await fetchLiveAircraft(options.adsb, { lat: parsed.data.lat, lon: parsed.data.lon, radiusNm: Math.min(100, parsed.data.radiusNm * 3) }, fetch, liveProviderOptions(options.adsb));
       const providerFailures = result.providerFailures ?? [];
       if (providerFailures.length > 0) log("warn", "aircraft_provider_fallback", { served: result.sources[0], failed: providerFailures.map((f) => `${f.provider}=${f.code}${f.detail ? `(${f.detail})` : ""}`).join("; ") });
       // Signed-in users with the history grant contribute these real observations to the flight recorder.
       const recording = await recordLiveObservations(options.recording ?? null, c.req.header("authorization"), { latitude: parsed.data.lat, longitude: parsed.data.lon, radiusNm: parsed.data.radiusNm, centerMode: parsed.data.center }, result);
-      return c.json({ observations: result.observations, receivedAt: result.receivedAt, sources: result.sources, ...(providerFailures.length > 0 ? { providerFailures } : {}), recording: recording.status });
+      return c.json({ observations: result.observations.filter((point) => distanceNm(parsed.data.lat, parsed.data.lon, point.latitude, point.longitude) <= parsed.data.radiusNm), receivedAt: result.receivedAt, sources: result.sources, ...(providerFailures.length > 0 ? { providerFailures } : {}), recording: recording.status });
     } catch (error) {
       const code = error && typeof error === "object" && "code" in error ? String((error as { code?: string }).code) : "";
       if (code === "provider_adapter_not_implemented") return c.json({ error: "provider_adapter_not_implemented" }, 501);

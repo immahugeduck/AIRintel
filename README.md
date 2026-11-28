@@ -106,7 +106,7 @@ npm run build
 - Phase 2 authenticated registration/ICAO24/callsign search, atomic recorder transaction, 24-hour spatial replay, and per-source gap handling
 - Phase 3 groundwork for authenticated aircraft-profile contracts, FAA storage boundaries, owner/operator separation, and per-source statistics; real FAA import and public profile deployment remain gated
 
-Live aircraft remain blocked until the provider onboarding gate in `docs/provider-onboarding.md` is completed.
+The readsb aircraft feeds listed in `docs/provider-onboarding.md` are onboarded; OpenSky and other new providers remain gated.
 
 Phase Two implementation details and deployment gates are documented in `docs/phase-two-flight-recorder.md`.
 
@@ -118,3 +118,23 @@ AIRIntel logs every entry into your radius even when the app is closed: the app 
 ## Deploying to Vercel
 
 See [`docs/deploy-checklist.md`](docs/deploy-checklist.md). The SPA and the API ship as one Vercel project: `vercel.json` builds the Vite app and rewrites `/api/*` to `api/index.ts` (the Hono app). Set `VITE_*_API_URL` to the relative paths `/api/history`, `/api/aircraft-profile` and `/api/aircraft-nearby`.
+
+
+## Encounter replay and intelligence
+
+Each saved entry offers **Replay this encounter**, opening History with a selectable encounter and up to ten minutes
+of retained approach/departure on each side (maximum 24 hours per request). Play/pause, previous/next, timestamp
+scrubbing and 1×/10×/30×/60× playback use actual recorded samples, preserving source boundaries and reception gaps.
+History shows the map on phones as well as desktops. Tracks refresh while the app is visible; cached tracks stay
+visible when refresh fails. The saved entry center is used when known; a moving follow-me center may differ later.
+
+Foreground provider queries collect a context radius of 3× the watch radius, capped at 100 NM. Recording still
+requires a valid JWT and history grant, and the inner recording radius remains capped at 50 NM. Only aircraft
+inside the inner radius appear in the public live list; outside observations are recorded to identify exits,
+approach, departure and subsequent re-entry. Sweeps retain their existing configurable margin (default 2×).
+Coverage outside those query circles, between sweeps, after retention expiry, or during outages is unknown.
+
+The encounter-intelligence disclosure reports type frequency among distinct typed aircraft in the loaded log.
+“Uncommon” means at most 5% in a sample of at least 20 typed aircraft, not worldwide rarity. Military database
+flags are sourced classifications, not mission evidence. Behavioral reasons retain their evidence labels;
+surveillance likelihood stays Unknown without independent supporting evidence. No new dependencies are required.
